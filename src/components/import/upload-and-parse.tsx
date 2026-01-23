@@ -22,6 +22,82 @@ type PlayerForm = {
 
 const HERO_FALLBACK = "Unknown";
 
+/** File -> HTMLImageElement (browser) */
+async function fileToImage(file: File): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to load image"));
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function drawToCanvas(img: HTMLImageElement): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+  ctx.drawImage(img, 0, 0);
+  return canvas;
+}
+
+function cropCanvas(src: HTMLCanvasElement, x: number, y: number, w: number, h: number): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.floor(w));
+  out.height = Math.max(1, Math.floor(h));
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+  ctx.drawImage(src, x, y, w, h, 0, 0, out.width, out.height);
+  return out;
+}
+
+function scaleCanvas(src: HTMLCanvasElement, scale: number): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.floor(src.width * scale));
+  out.height = Math.max(1, Math.floor(src.height * scale));
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(src, 0, 0, out.width, out.height);
+  return out;
+}
+
+/**
+ * Simple grayscale + threshold to boost contrast for small UI text.
+ * threshold: 0-255 (lower => darker text preserved)
+ */
+function grayscaleAndThreshold(src: HTMLCanvasElement, threshold = 160): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+  ctx.drawImage(src, 0, 0);
+
+  const imgData = ctx.getImageData(0, 0, out.width, out.height);
+  const d = imgData.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    const v = lum >= threshold ? 255 : 0;
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  return out;
+}
+
 export function UploadAndParse() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -74,11 +150,33 @@ export function UploadAndParse() {
   async function runOCR(selected: File) {
     setStatus("ocr");
     setProgress(0);
-    const { data } = await Tesseract.recognize(selected, "eng", {
+
+    // 1) file -> image -> canvas
+    const img = await fileToImage(selected);
+    const full = drawToCanvas(img);
+
+    // 2) crop to the scoreboard region (rough first pass; tune if needed)
+    // If RAW OCR TEXT is mostly junk, adjust these percentages.
+    const x = Math.floor(full.width * 0.24);
+    const y = Math.floor(full.height * 0.12);
+    const w = Math.floor(full.width * 0.52);
+    const h = Math.floor(full.height * 0.58);
+
+    const cropped = cropCanvas(full, x, y, w, h);
+
+    // 3) upscale + contrast
+    const scaled = scaleCanvas(cropped, 2.5);
+    const bw = grayscaleAndThreshold(scaled, 160);
+
+    // 4) OCR on processed data URL
+    const dataUrl = bw.toDataURL("image/png");
+
+    const { data } = await Tesseract.recognize(dataUrl, "eng", {
       logger: (m) => {
         if (m.status === "recognizing text") setProgress(Math.round((m.progress ?? 0) * 100));
       },
     });
+
     return data.text ?? "";
   }
 
@@ -169,42 +267,44 @@ export function UploadAndParse() {
         <CardContent className="p-6">
           <div className="flex items-center justify-between gap-2">
             <div className="font-display tracking-widest text-sm text-foreground">{title}</div>
-           <div className="flex items-center gap-2">
-  {(status === "confirm" || screenshotUrl) ? (
-    <Button onClick={handleSave} className="gap-2">
-      <Save className="w-4 h-4" />
-      SAVE MATCH
-    </Button>
-  ) : null}
+            <div className="flex items-center gap-2">
+              {status === "confirm" || screenshotUrl ? (
+                <Button onClick={handleSave} className="gap-2">
+                  <Save className="w-4 h-4" />
+                  SAVE MATCH
+                </Button>
+              ) : null}
 
-  <Button onClick={handleStart} disabled={!canStart} className="gap-2" variant={screenshotUrl ? "outline" : "default"}>
-    <Wand2 className="w-4 h-4" />
-    {screenshotUrl ? "RE-RUN OCR" : "RUN OCR"}
-  </Button>
+              <Button
+                onClick={handleStart}
+                disabled={!canStart}
+                className="gap-2"
+                variant={screenshotUrl ? "outline" : "default"}
+              >
+                <Wand2 className="w-4 h-4" />
+                {screenshotUrl ? "RE-RUN OCR" : "RUN OCR"}
+              </Button>
 
-  {screenshotUrl && status !== "confirm" ? (
-    <Button
-      type="button"
-      variant="outline"
-      className="gap-2"
-      onClick={() => {
-        setStatus("confirm");
-        setError(null);
-      }}
-    >
-      SKIP OCR
-    </Button>
-  ) : null}
-</div>
-
+              {screenshotUrl && status !== "confirm" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => {
+                    setStatus("confirm");
+                    setError(null);
+                  }}
+                >
+                  SKIP OCR
+                </Button>
+              ) : null}
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3">
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">
-                  SCREENSHOT
-                </label>
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">SCREENSHOT</label>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -212,11 +312,7 @@ export function UploadAndParse() {
                   className="hidden"
                   onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
                 />
-                <Button
-                  variant="outline"
-                  className="w-full justify-start gap-2"
-                  onClick={() => fileInputRef.current?.click()}
-                >
+                <Button variant="outline" className="w-full justify-start gap-2" onClick={() => fileInputRef.current?.click()}>
                   <UploadCloud className="w-4 h-4" />
                   {file ? file.name : "CHOOSE IMAGE"}
                 </Button>
@@ -226,22 +322,14 @@ export function UploadAndParse() {
               </div>
 
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">
-                  PLAYED AT
-                </label>
-                <Input
-                  type="datetime-local"
-                  value={playedAt}
-                  onChange={(e) => setPlayedAt(e.target.value)}
-                />
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">PLAYED AT</label>
+                <Input type="datetime-local" value={playedAt} onChange={(e) => setPlayedAt(e.target.value)} />
               </div>
             </div>
 
             <div className="grid sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">
-                  MODE
-                </label>
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MODE</label>
                 <Select value={mode} onChange={(e) => setMode(e.target.value as MatchMode)}>
                   <option value="COMP">COMP</option>
                   <option value="QP">QP</option>
@@ -250,9 +338,7 @@ export function UploadAndParse() {
                 </Select>
               </div>
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">
-                  RESULT
-                </label>
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">RESULT</label>
                 <Select value={result} onChange={(e) => setResult(e.target.value as MatchResult)}>
                   <option value="W">W</option>
                   <option value="L">L</option>
@@ -260,9 +346,7 @@ export function UploadAndParse() {
                 </Select>
               </div>
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">
-                  MAP
-                </label>
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MAP</label>
                 <Input value={map} onChange={(e) => setMap(e.target.value)} placeholder="e.g. KING'S ROW" />
               </div>
             </div>
@@ -281,7 +365,8 @@ export function UploadAndParse() {
 
             {status === "done" ? (
               <div className="text-xs font-mono tracking-widest text-primary border border-primary/40 bg-primary/10 rounded-lg px-3 py-2">
-                MATCH SAVED. VIEW <a className="underline" href="/matches">MATCHES</a> OR <a className="underline" href="/dashboard">DASHBOARD</a>.
+                MATCH SAVED. VIEW <a className="underline" href="/matches">MATCHES</a> OR{" "}
+                <a className="underline" href="/dashboard">DASHBOARD</a>.
               </div>
             ) : null}
 
@@ -290,32 +375,22 @@ export function UploadAndParse() {
                 <Card key={p.playerKey} className="bg-card/40">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
-                      <div className="font-display tracking-widest text-sm text-foreground">
-                        {p.playerKey.toUpperCase()}
-                      </div>
-                      <div className="text-[11px] font-mono tracking-widest text-muted-foreground">
-                        ROW {idx + 1}
-                      </div>
+                      <div className="font-display tracking-widest text-sm text-foreground">{p.playerKey.toUpperCase()}</div>
+                      <div className="text-[11px] font-mono tracking-widest text-muted-foreground">ROW {idx + 1}</div>
                     </div>
 
                     <div className="mt-3 grid sm:grid-cols-4 gap-2">
                       <div className="sm:col-span-1">
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">
-                          HERO
-                        </label>
+                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">HERO</label>
                         <Input
                           value={p.hero}
                           onChange={(e) =>
-                            setPlayers((ps) =>
-                              ps.map((x) => (x.playerKey === p.playerKey ? { ...x, hero: e.target.value } : x))
-                            )
+                            setPlayers((ps) => ps.map((x) => (x.playerKey === p.playerKey ? { ...x, hero: e.target.value } : x)))
                           }
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">
-                          K
-                        </label>
+                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">K</label>
                         <Input
                           value={String(p.kills)}
                           onChange={(e) =>
@@ -326,9 +401,7 @@ export function UploadAndParse() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">
-                          D
-                        </label>
+                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">D</label>
                         <Input
                           value={String(p.deaths)}
                           onChange={(e) =>
@@ -339,9 +412,7 @@ export function UploadAndParse() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">
-                          A
-                        </label>
+                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">A</label>
                         <Input
                           value={String(p.assists)}
                           onChange={(e) =>
@@ -365,12 +436,7 @@ export function UploadAndParse() {
           <div className="flex items-center justify-between">
             <div className="font-display tracking-widest text-sm text-foreground">PREVIEW</div>
             {screenshotUrl ? (
-              <a
-                className="text-xs font-mono tracking-widest text-primary underline"
-                href={screenshotUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a className="text-xs font-mono tracking-widest text-primary underline" href={screenshotUrl} target="_blank" rel="noreferrer">
                 OPEN BLOB
               </a>
             ) : null}
