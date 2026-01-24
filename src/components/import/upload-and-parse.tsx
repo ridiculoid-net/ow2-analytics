@@ -1,13 +1,13 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
-import { parseScoreboardOcr } from "@/lib/ocr/parse";
 import { saveMatchAction } from "@/app/actions";
 import type { MatchMode, MatchResult, PlayerKey } from "@/types";
 import { Button, Card, CardContent, Input, Select } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { UploadCloud, Wand2, Save, Image as ImageIcon } from "lucide-react";
+import { HEROES, MAPS } from "@/lib/ow2/constants";
+import { UploadCloud, Wand2, Save, Image as ImageIcon, Layers } from "lucide-react";
 
 type PlayerForm = {
   playerKey: PlayerKey;
@@ -20,126 +20,539 @@ type PlayerForm = {
   mitigation?: number | null;
 };
 
-const HERO_FALLBACK = "Unknown";
+type ParsedPlayerRow = {
+  playerKey: PlayerKey;
+  hero?: string | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  healing: number;
+  mitigation: number;
+};
 
-/** File -> HTMLImageElement (browser) */
-async function fileToImage(file: File): Promise<HTMLImageElement> {
+type RowCandidate = {
+  line: string;
+  nums: number[];
+  index: number;
+};
+
+type StatWindow = {
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  healing: number;
+  mitigation: number;
+};
+
+type ScoredWindow = {
+  stats: StatWindow;
+  score: number;
+};
+
+type ImportEntry = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  screenshotUrl?: string;
+  rawText: string;
+  players: PlayerForm[];
+  playedAt: string;
+  mode: MatchMode;
+  result: MatchResult;
+  map: string;
+  status: "idle" | "uploading" | "ocr" | "ready" | "saving" | "done" | "error";
+  error?: string | null;
+};
+
+const HERO_FALLBACK = "Unknown";
+const PLAYER_ORDER: PlayerKey[] = ["ridiculoid", "buttstough"];
+const HERO_PRIORITY = ["Reinhardt", "D.Va", "Mercy", "Junkrat", "Lucio", "Torbjorn", "Bastion"];
+
+function normalizeHeroName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function displayHeroName(name: string): string {
+  const norm = normalizeHeroName(name);
+  if (norm === "lucio") return "Lucio";
+  if (norm === "torbjorn") return "Torbjorn";
+  return name;
+}
+
+const HERO_OPTIONS = (() => {
+  const byNorm = new Map(HEROES.map((h) => [normalizeHeroName(h.name), h]));
+  const prioritized: { name: string; role: string }[] = [];
+  const used = new Set<string>();
+
+  for (const p of HERO_PRIORITY) {
+    const found = byNorm.get(normalizeHeroName(p));
+    if (found && !used.has(found.name)) {
+      prioritized.push(found);
+      used.add(found.name);
+    }
+  }
+
+  const rest = HEROES.filter((h) => !used.has(h.name));
+  return [...prioritized, ...rest];
+})();
+
+function defaultPlayers(): PlayerForm[] {
+  return [
+    { playerKey: "ridiculoid", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0, damage: null, healing: null, mitigation: null },
+    { playerKey: "buttstough", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0, damage: null, healing: null, mitigation: null },
+  ];
+}
+
+/** Robust parser that matches OCR variants like BUTISTOUGH / RIOICULOID */
+function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
+  const lines = (text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let rows = extractRowCandidates(lines);
+  const filtered = rows.filter((r) => isLikelyStatRow(r.nums));
+  if (filtered.length > 0) rows = filtered;
+
+  if (rows.length === 0) {
+    const allNums = extractNumbers(lines.join(" "));
+    if (allNums.length >= 6) {
+      rows = [];
+      for (let i = 0; i + 5 < allNums.length; i += 6) {
+        rows.push({ line: "", nums: allNums.slice(i, i + 6), index: i / 6 });
+      }
+    }
+  }
+
+  const byKey = new Map<PlayerKey, ParsedPlayerRow>();
+  const used = new Set<number>();
+
+  // 0) Hard-match: numbers after name token in the same line
+  for (const key of PLAYER_ORDER) {
+    const stats = findInlineStats(lines, key);
+    if (stats) {
+      byKey.set(key, toParsedRowFromStats(key, stats));
+    }
+  }
+
+  // 1) Prefer name-based matches when available
+  for (const key of PLAYER_ORDER) {
+    if (byKey.has(key)) continue;
+    const match = findBestRowByName(rows, key);
+    if (match) {
+      byKey.set(key, toParsedRow(key, match.nums));
+      used.add(match.index);
+    }
+  }
+
+  // 2) Fallback: assign remaining rows top-to-bottom
+  const remainingKeys = PLAYER_ORDER.filter((k) => !byKey.has(k));
+  if (remainingKeys.length > 0) {
+    const remainingRows = rows
+      .filter((r) => !used.has(r.index))
+      .sort((a, b) => a.index - b.index);
+
+    for (let i = 0; i < remainingKeys.length && i < remainingRows.length; i++) {
+      byKey.set(remainingKeys[i], toParsedRow(remainingKeys[i], remainingRows[i].nums));
+    }
+  }
+
+  const players: ParsedPlayerRow[] = [];
+  for (const key of PLAYER_ORDER) {
+    const row = byKey.get(key);
+    if (row) players.push(row);
+  }
+
+  return { players };
+}
+
+function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  let best: ScoredWindow | null = null;
+
+  for (const line of lines) {
+    if (shouldSkipLine(line)) continue;
+
+    const tokens = line.split(/\s+/).filter(Boolean);
+    let nameIdx = -1;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const norm = normalizeToken(tokens[i]);
+      for (const target of targets) {
+        if (levenshtein(norm, target) <= 2) {
+          nameIdx = i;
+          break;
+        }
+      }
+      if (nameIdx !== -1) break;
+    }
+
+    if (nameIdx === -1) continue;
+
+    const nums = parseNumbersFromTokens(tokens.slice(nameIdx + 1));
+    const scored = pickBestStatWindowWithScore(nums);
+    if (scored && (!best || scored.score > best.score)) {
+      best = scored;
+    }
+  }
+
+  return best?.stats ?? null;
+}
+
+function toParsedRowFromStats(playerKey: PlayerKey, stats: StatWindow): ParsedPlayerRow {
+  return {
+    playerKey,
+    hero: null,
+    kills: stats.kills,
+    deaths: stats.deaths,
+    assists: stats.assists,
+    damage: stats.damage,
+    healing: stats.healing,
+    mitigation: stats.mitigation,
+  };
+}
+
+function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerRow {
+  const safeNums = nums ?? [];
+  const best = pickBestStatWindowWithScore(safeNums);
+  const stats = best?.stats ?? {
+    kills: safeNums.at(-6) ?? 0,
+    deaths: safeNums.at(-5) ?? 0,
+    assists: safeNums.at(-4) ?? 0,
+    damage: safeNums.at(-3) ?? 0,
+    healing: safeNums.at(-2) ?? 0,
+    mitigation: safeNums.at(-1) ?? 0,
+  };
+
+  return {
+    playerKey,
+    hero: null,
+    kills: stats.kills,
+    deaths: stats.deaths,
+    assists: stats.assists,
+    damage: stats.damage,
+    healing: stats.healing,
+    mitigation: stats.mitigation,
+  };
+}
+
+function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
+  if (nums.length < 6) return null;
+
+  let best: ScoredWindow | null = null;
+
+  for (let i = 0; i + 5 < nums.length; i++) {
+    const k = nums[i];
+    const d = nums[i + 1];
+    const a = nums[i + 2];
+    const dmg = nums[i + 3];
+    const heal = nums[i + 4];
+    const mit = nums[i + 5];
+
+    const score = scoreStatWindow(k, d, a, dmg, heal, mit);
+    if (score === null) continue;
+
+    if (!best || score > best.score) {
+      best = { stats: { kills: k, deaths: d, assists: a, damage: dmg, healing: heal, mitigation: mit }, score };
+    }
+  }
+
+  return best;
+}
+
+function scoreStatWindow(k: number, d: number, a: number, dmg: number, heal: number, mit: number): number | null {
+  if (![k, d, a, dmg, heal, mit].every((n) => Number.isFinite(n) && n >= 0)) return null;
+
+  const kdaMax = 80;
+  if (k > kdaMax || d > kdaMax || a > kdaMax) return null;
+
+  const statMax = 200000;
+  if (dmg > statMax || heal > statMax || mit > statMax) return null;
+
+  let score = 0;
+
+  if (k > 0 || d > 0 || a > 0) score += 5;
+  if (dmg >= 100) score += 3;
+  if (heal >= 100) score += 2;
+  if (mit >= 100) score += 2;
+
+  const hugePenalty = (n: number) => (n >= 100000 ? 5 : 0);
+  score -= hugePenalty(dmg);
+  score -= hugePenalty(heal);
+  score -= hugePenalty(mit);
+
+  return score;
+}
+
+function extractRowCandidates(lines: string[]): RowCandidate[] {
+  const rows: RowCandidate[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let best: RowCandidate | null = null;
+
+    for (let span = 1; span <= 3 && i + span - 1 < lines.length; span++) {
+      const line = lines.slice(i, i + span).join(" ");
+      const nums = extractNumbers(line);
+      if (nums.length >= 6) {
+        best = { line, nums, index: i };
+        break;
+      }
+    }
+
+    if (best) rows.push(best);
+  }
+
+  return rows;
+}
+
+function isLikelyStatRow(nums: number[]): boolean {
+  return pickBestStatWindowWithScore(nums) !== null;
+}
+
+function findBestRowByName(rows: RowCandidate[], playerKey: PlayerKey): RowCandidate | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  let best: { row: RowCandidate; dist: number; score: number } | null = null;
+
+  for (const row of rows) {
+    const tokens = extractWordTokens(row.line).map(normalizeToken);
+
+    let minDist = Infinity;
+    for (const t of tokens) {
+      for (const target of targets) {
+        const dist = levenshtein(t, target);
+        if (dist < minDist) minDist = dist;
+      }
+    }
+
+    if (minDist > 2) continue;
+
+    const scored = pickBestStatWindowWithScore(row.nums);
+    if (!scored) continue;
+
+    if (!best || scored.score > best.score || (scored.score === best.score && minDist < best.dist)) {
+      best = { row, dist: minDist, score: scored.score };
+    }
+  }
+
+  return best ? best.row : null;
+}
+
+function extractWordTokens(line: string): string[] {
+  const m = line.toUpperCase().match(/[A-Z0-9]{4,}/g);
+  return m ?? [];
+}
+
+function normalizeToken(token: string): string {
+  return token
+    .toUpperCase()
+    .replace(/0/g, "O")
+    .replace(/1/g, "I")
+    .replace(/5/g, "S")
+    .replace(/[^A-Z]/g, "");
+}
+
+function shouldSkipLine(line: string): boolean {
+  const upper = line.toUpperCase();
+  return upper.includes("SUMMARY") || upper.includes("TEAMS") || upper.includes("PERSONAL") || upper.includes("ENTER CHAT");
+}
+
+function parseNumbersFromTokens(tokens: string[]): number[] {
+  const nums: number[] = [];
+  for (const token of tokens) {
+    const upper = token.toUpperCase();
+    if (upper === "A") {
+      nums.push(4);
+      continue;
+    }
+    if (upper === "O") {
+      nums.push(0);
+      continue;
+    }
+    const found = extractNumbers(token);
+    if (found.length) nums.push(...found);
+  }
+
+  if (nums.length === 5 && nums[2] >= 100) {
+    return [nums[0], nums[1], 0, nums[2], nums[3], nums[4]];
+  }
+
+  return nums;
+}
+
+function extractNumbers(line: string): number[] {
+  const matches = line.match(/\d[\d,.\s]*\d|\d/g);
+  if (!matches) return [];
+  return matches
+    .map((raw) => raw.replace(/\s+/g, ""))
+    .map((raw) => normalizeToInt(raw))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .map((n) => Math.trunc(n));
+}
+
+function normalizeToInt(s: string): number {
+  if (!s) return NaN;
+
+  if (s.includes(",")) {
+    const cleaned = s.replace(/,/g, "").replace(/[^\d]/g, "");
+    return cleaned ? Number(cleaned) : NaN;
+  }
+
+  const dotIdx = s.indexOf(".");
+  if (dotIdx !== -1) {
+    const after = s.slice(dotIdx + 1);
+    if (/^\d{3}$/.test(after)) {
+      const cleaned = s.replace(/\./g, "").replace(/[^\d]/g, "");
+      return cleaned ? Number(cleaned) : NaN;
+    }
+  }
+
+  const cleaned = s.replace(/[^\d]/g, "");
+  return cleaned ? Number(cleaned) : NaN;
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const v0 = new Array(b.length + 1).fill(0);
+  const v1 = new Array(b.length + 1).fill(0);
+
+  for (let i = 0; i <= b.length; i++) v0[i] = i;
+
+  for (let i = 0; i < a.length; i++) {
+    v1[0] = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
+  }
+  return v1[b.length];
+}
+
+function clampByte(n: number): number {
+  return Math.max(0, Math.min(255, n));
+}
+
+function applyGrayscaleAndContrast(data: Uint8ClampedArray, contrast: number) {
+  const c = clampByte(contrast);
+  const factor = (259 * (c + 255)) / (255 * (259 - c));
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const adj = clampByte(factor * (gray - 128) + 128);
+    data[i] = adj;
+    data[i + 1] = adj;
+    data[i + 2] = adj;
+  }
+}
+
+async function preprocessImage(file: File): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
     img.decoding = "async";
     img.src = url;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("Failed to load image"));
-    });
-    return img;
+    await img.decode();
+
+    const minWidth = 1600;
+    const minHeight = 900;
+    const scale = Math.max(1, minWidth / img.width, minHeight / img.height);
+
+    const width = Math.round(img.width * scale);
+    const height = Math.round(img.height * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return url;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    applyGrayscaleAndContrast(imageData.data, 40);
+    ctx.putImageData(imageData, 0, 0);
+
+    return canvas.toDataURL("image/png");
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
-function drawToCanvas(img: HTMLImageElement): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-  ctx.drawImage(img, 0, 0);
-  return canvas;
-}
-
-function cropCanvas(src: HTMLCanvasElement, x: number, y: number, w: number, h: number): HTMLCanvasElement {
-  const out = document.createElement("canvas");
-  out.width = Math.max(1, Math.floor(w));
-  out.height = Math.max(1, Math.floor(h));
-  const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-  ctx.drawImage(src, x, y, w, h, 0, 0, out.width, out.height);
-  return out;
-}
-
-function scaleCanvas(src: HTMLCanvasElement, scale: number): HTMLCanvasElement {
-  const out = document.createElement("canvas");
-  out.width = Math.max(1, Math.floor(src.width * scale));
-  out.height = Math.max(1, Math.floor(src.height * scale));
-  const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(src, 0, 0, out.width, out.height);
-  return out;
-}
-
-/**
- * Simple grayscale + threshold to boost contrast for small UI text.
- * threshold: 0-255 (lower => darker text preserved)
- */
-function grayscaleAndThreshold(src: HTMLCanvasElement, threshold = 160): HTMLCanvasElement {
-  const out = document.createElement("canvas");
-  out.width = src.width;
-  out.height = src.height;
-  const ctx = out.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-  ctx.drawImage(src, 0, 0);
-
-  const imgData = ctx.getImageData(0, 0, out.width, out.height);
-  const d = imgData.data;
-
-  for (let i = 0; i < d.length; i += 4) {
-    const lum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-    const v = lum >= threshold ? 255 : 0;
-    d[i] = v;
-    d[i + 1] = v;
-    d[i + 2] = v;
-    d[i + 3] = 255;
-  }
-
-  ctx.putImageData(imgData, 0, 0);
-  return out;
-}
-
 export function UploadAndParse() {
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [entries, setEntries] = useState<ImportEntry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const [status, setStatus] = useState<"idle" | "uploading" | "ocr" | "confirm" | "saving" | "done" | "error">("idle");
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
-  const [screenshotUrl, setScreenshotUrl] = useState<string | undefined>(undefined);
-  const [rawText, setRawText] = useState<string>("");
-
-  const [playedAt, setPlayedAt] = useState<string>(() => new Date().toISOString().slice(0, 16));
-  const [mode, setMode] = useState<MatchMode>("COMP");
-  const [result, setResult] = useState<MatchResult>("W");
-  const [map, setMap] = useState<string>("");
-
-  const [players, setPlayers] = useState<PlayerForm[]>([
-    { playerKey: "ridiculoid", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0 },
-    { playerKey: "buttstough", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0 },
-  ]);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const canStart = !!file && status !== "uploading" && status !== "ocr" && status !== "saving";
+  const activeEntry = useMemo(() => entries.find((e) => e.id === activeId) ?? entries[0] ?? null, [entries, activeId]);
+  const canStart = entries.length > 0 && status !== "uploading" && status !== "ocr" && status !== "saving";
 
-  function onPickFile(f: File | null) {
-    setFile(f);
+  function makeEntry(file: File): ImportEntry {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      rawText: "",
+      players: defaultPlayers(),
+      playedAt: new Date().toISOString().slice(0, 16),
+      mode: "QP",
+      result: "W",
+      map: "",
+      status: "idle",
+      error: null,
+    };
+  }
+
+  function onPickFiles(files: FileList | null) {
     setError(null);
     setStatus("idle");
     setProgress(0);
-    setScreenshotUrl(undefined);
-    setRawText("");
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    if (f) setPreviewUrl(URL.createObjectURL(f));
-    else setPreviewUrl(null);
+
+    setEntries((prev) => {
+      prev.forEach((e) => URL.revokeObjectURL(e.previewUrl));
+      return [];
+    });
+
+    if (!files || files.length === 0) {
+      setActiveId(null);
+      return;
+    }
+
+    const next = Array.from(files).map(makeEntry);
+    setEntries(next);
+    setActiveId(next[0].id);
+  }
+
+  function updateEntry(id: string, patch: Partial<ImportEntry>) {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   }
 
   async function uploadToBlob(selected: File): Promise<string> {
     const form = new FormData();
     form.set("file", selected);
     form.set("filename", `scoreboard-${Date.now()}.png`);
-
     const res = await fetch("/api/blob/upload", { method: "POST", body: form });
     if (!res.ok) throw new Error("Blob upload failed");
     const json = await res.json();
@@ -151,61 +564,50 @@ export function UploadAndParse() {
     setStatus("ocr");
     setProgress(0);
 
-    // 1) file -> image -> canvas
-    const img = await fileToImage(selected);
-    const full = drawToCanvas(img);
+    const preprocessed = await preprocessImage(selected);
 
-    // 2) crop to the scoreboard region (rough first pass; tune if needed)
-    // If RAW OCR TEXT is mostly junk, adjust these percentages.
-    const x = Math.floor(full.width * 0.24);
-    const y = Math.floor(full.height * 0.12);
-    const w = Math.floor(full.width * 0.52);
-    const h = Math.floor(full.height * 0.58);
-
-    const cropped = cropCanvas(full, x, y, w, h);
-
-    // 3) upscale + contrast
-    const scaled = scaleCanvas(cropped, 2.5);
-    const bw = grayscaleAndThreshold(scaled, 160);
-
-    // 4) OCR on processed data URL
-    const dataUrl = bw.toDataURL("image/png");
-
-    const { data } = await Tesseract.recognize(dataUrl, "eng", {
+    const { data } = await Tesseract.recognize(preprocessed, "eng", {
       logger: (m) => {
         if (m.status === "recognizing text") setProgress(Math.round((m.progress ?? 0) * 100));
       },
     });
-
     return data.text ?? "";
   }
 
-  async function handleStart() {
-    if (!file) return;
+  async function handleStartAll() {
+    if (entries.length === 0) return;
     setError(null);
 
     try {
-      setStatus("uploading");
-      const url = await uploadToBlob(file);
-      setScreenshotUrl(url);
+      for (const entry of entries) {
+        updateEntry(entry.id, { status: "uploading", error: null });
+        setStatus("uploading");
 
-      const text = await runOCR(file);
-      setRawText(text);
+        const url = await uploadToBlob(entry.file);
+        updateEntry(entry.id, { screenshotUrl: url });
 
-      const parsed = parseScoreboardOcr(text);
+        const text = await runOCR(entry.file);
+        updateEntry(entry.id, { rawText: text, status: "ocr" });
 
-      setPlayers((prev) =>
-        prev.map((p) => {
-          const found = parsed.players.find((x) => x.playerKey === p.playerKey);
-          return {
-            ...p,
-            hero: found?.hero ?? HERO_FALLBACK,
-            kills: found?.kills ?? 0,
-            deaths: found?.deaths ?? 0,
-            assists: found?.assists ?? 0,
-          };
-        })
-      );
+        const parsed = parseScoreboardOcrLocal(text);
+
+        updateEntry(entry.id, {
+          players: entry.players.map((p) => {
+            const found = parsed.players.find((x) => x.playerKey === p.playerKey);
+            return {
+              ...p,
+              hero: found?.hero ?? p.hero ?? HERO_FALLBACK,
+              kills: found?.kills ?? 0,
+              deaths: found?.deaths ?? 0,
+              assists: found?.assists ?? 0,
+              damage: found?.damage ?? null,
+              healing: found?.healing ?? null,
+              mitigation: found?.mitigation ?? null,
+            };
+          }),
+          status: "ready",
+        });
+      }
 
       setStatus("confirm");
     } catch (e: any) {
@@ -214,8 +616,10 @@ export function UploadAndParse() {
     }
   }
 
-  async function handleSave() {
-    if (!map.trim()) {
+  async function handleSaveActive() {
+    if (!activeEntry) return;
+
+    if (!activeEntry.map.trim()) {
       setError("Map is required.");
       return;
     }
@@ -225,12 +629,12 @@ export function UploadAndParse() {
 
     try {
       const payload = {
-        playedAt: new Date(playedAt).toISOString(),
-        mode,
-        result,
-        map: map.trim(),
-        screenshotUrl,
-        players: players.map((p) => ({
+        playedAt: new Date(activeEntry.playedAt).toISOString(),
+        mode: activeEntry.mode,
+        result: activeEntry.result,
+        map: activeEntry.map.trim(),
+        screenshotUrl: activeEntry.screenshotUrl,
+        players: activeEntry.players.map((p) => ({
           ...p,
           hero: p.hero?.trim() || HERO_FALLBACK,
           kills: Number(p.kills) || 0,
@@ -243,7 +647,7 @@ export function UploadAndParse() {
       };
 
       await saveMatchAction(payload);
-
+      updateEntry(activeEntry.id, { status: "done" });
       setStatus("done");
     } catch (e: any) {
       setStatus("error");
@@ -252,10 +656,10 @@ export function UploadAndParse() {
   }
 
   const title = useMemo(() => {
-    if (status === "ocr") return `OCR RUNNING • ${progress}%`;
-    if (status === "uploading") return "UPLOADING…";
+    if (status === "ocr") return `OCR RUNNING - ${progress}%`;
+    if (status === "uploading") return "UPLOADING";
     if (status === "confirm") return "CONFIRM PARSE";
-    if (status === "saving") return "SAVING…";
+    if (status === "saving") return "SAVING";
     if (status === "done") return "IMPORTED";
     if (status === "error") return "ERROR";
     return "IMPORT SCREENSHOT";
@@ -268,36 +672,17 @@ export function UploadAndParse() {
           <div className="flex items-center justify-between gap-2">
             <div className="font-display tracking-widest text-sm text-foreground">{title}</div>
             <div className="flex items-center gap-2">
-              {status === "confirm" || screenshotUrl ? (
-                <Button onClick={handleSave} className="gap-2">
+              {activeEntry ? (
+                <Button onClick={handleSaveActive} className="gap-2" disabled={activeEntry.status === "saving"}>
                   <Save className="w-4 h-4" />
                   SAVE MATCH
                 </Button>
               ) : null}
 
-              <Button
-                onClick={handleStart}
-                disabled={!canStart}
-                className="gap-2"
-                variant={screenshotUrl ? "outline" : "default"}
-              >
+              <Button onClick={handleStartAll} disabled={!canStart} className="gap-2" variant={entries.length > 0 ? "outline" : "default"}>
                 <Wand2 className="w-4 h-4" />
-                {screenshotUrl ? "RE-RUN OCR" : "RUN OCR"}
+                {entries.length > 1 ? "RUN OCR (ALL)" : "RUN OCR"}
               </Button>
-
-              {screenshotUrl && status !== "confirm" ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-2"
-                  onClick={() => {
-                    setStatus("confirm");
-                    setError(null);
-                  }}
-                >
-                  SKIP OCR
-                </Button>
-              ) : null}
             </div>
           </div>
 
@@ -309,124 +694,166 @@ export function UploadAndParse() {
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
-                  onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => onPickFiles(e.target.files)}
                 />
                 <Button variant="outline" className="w-full justify-start gap-2" onClick={() => fileInputRef.current?.click()}>
                   <UploadCloud className="w-4 h-4" />
-                  {file ? file.name : "CHOOSE IMAGE"}
+                  {entries.length > 1 ? `${entries.length} FILES` : entries.length === 1 ? entries[0].file.name : "CHOOSE IMAGE"}
                 </Button>
-                <p className="mt-2 text-[11px] font-mono tracking-widest text-muted-foreground">
-                  Use end-of-match scoreboard that includes both players.
-                </p>
               </div>
 
-              <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">PLAYED AT</label>
-                <Input type="datetime-local" value={playedAt} onChange={(e) => setPlayedAt(e.target.value)} />
-              </div>
+              {activeEntry ? (
+                <div>
+                  <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">PLAYED AT</label>
+                  <Input
+                    type="datetime-local"
+                    value={activeEntry.playedAt}
+                    onChange={(e) => updateEntry(activeEntry.id, { playedAt: e.target.value })}
+                  />
+                </div>
+              ) : null}
             </div>
 
-            <div className="grid sm:grid-cols-3 gap-3">
+            {entries.length > 1 ? (
               <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MODE</label>
-                <Select value={mode} onChange={(e) => setMode(e.target.value as MatchMode)}>
-                  <option value="COMP">COMP</option>
-                  <option value="QP">QP</option>
-                  <option value="CUSTOM">CUSTOM</option>
-                  <option value="OTHER">OTHER</option>
-                </Select>
+                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">BULK FILES</label>
+                <div className="grid gap-2">
+                  {entries.map((e) => (
+                    <Button
+                      key={e.id}
+                      type="button"
+                      variant={activeEntry?.id === e.id ? "default" : "outline"}
+                      className="justify-start gap-2"
+                      onClick={() => setActiveId(e.id)}
+                    >
+                      <Layers className="w-4 h-4" />
+                      {e.file.name}
+                    </Button>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">RESULT</label>
-                <Select value={result} onChange={(e) => setResult(e.target.value as MatchResult)}>
-                  <option value="W">W</option>
-                  <option value="L">L</option>
-                  <option value="D">D</option>
-                </Select>
+            ) : null}
+
+            {activeEntry ? (
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MODE</label>
+                  <Select value={activeEntry.mode} onChange={(e) => updateEntry(activeEntry.id, { mode: e.target.value as MatchMode })}>
+                    <option value="QP">QP</option>
+                    <option value="COMP">COMP</option>
+                    <option value="CUSTOM">CUSTOM</option>
+                    <option value="OTHER">OTHER</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">RESULT</label>
+                  <Select value={activeEntry.result} onChange={(e) => updateEntry(activeEntry.id, { result: e.target.value as MatchResult })}>
+                    <option value="W">W</option>
+                    <option value="L">L</option>
+                    <option value="D">D</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MAP</label>
+                  <Input value={activeEntry.map} onChange={(e) => updateEntry(activeEntry.id, { map: e.target.value })} placeholder="e.g. KING'S ROW" />
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MAP</label>
-                <Input value={map} onChange={(e) => setMap(e.target.value)} placeholder="e.g. KING'S ROW" />
-              </div>
-            </div>
+            ) : null}
 
             {error ? (
-              <div className="text-xs font-mono tracking-widest text-danger border border-danger/40 bg-danger/10 rounded-lg px-3 py-2">
-                {error}
-              </div>
+              <div className="text-xs font-mono tracking-widest text-danger border border-danger/40 bg-danger/10 rounded-lg px-3 py-2">{error}</div>
             ) : null}
 
-            {status === "ocr" ? (
-              <div className="text-xs font-mono tracking-widest text-muted-foreground">
-                OCR PROGRESS: <span className="text-primary">{progress}%</span>
-              </div>
-            ) : null}
-
-            {status === "done" ? (
-              <div className="text-xs font-mono tracking-widest text-primary border border-primary/40 bg-primary/10 rounded-lg px-3 py-2">
-                MATCH SAVED. VIEW <a className="underline" href="/matches">MATCHES</a> OR{" "}
-                <a className="underline" href="/dashboard">DASHBOARD</a>.
-              </div>
-            ) : null}
-
-            <div className="grid gap-3">
-              {players.map((p, idx) => (
-                <Card key={p.playerKey} className="bg-card/40">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
+            {activeEntry ? (
+              <div className="grid gap-3">
+                {activeEntry.players.map((p) => (
+                  <Card key={p.playerKey} className="bg-card/40">
+                    <CardContent className="p-4">
                       <div className="font-display tracking-widest text-sm text-foreground">{p.playerKey.toUpperCase()}</div>
-                      <div className="text-[11px] font-mono tracking-widest text-muted-foreground">ROW {idx + 1}</div>
-                    </div>
 
-                    <div className="mt-3 grid sm:grid-cols-4 gap-2">
-                      <div className="sm:col-span-1">
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">HERO</label>
-                        <Input
-                          value={p.hero}
-                          onChange={(e) =>
-                            setPlayers((ps) => ps.map((x) => (x.playerKey === p.playerKey ? { ...x, hero: e.target.value } : x)))
-                          }
-                        />
+                      <div className="mt-3 grid sm:grid-cols-6 gap-2">
+                        <div className="sm:col-span-2">
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">HERO</label>
+                          <Select
+                            value={p.hero}
+                            onChange={(e) =>
+                              updateEntry(activeEntry.id, {
+                                players: activeEntry.players.map((x) =>
+                                  x.playerKey === p.playerKey ? { ...x, hero: e.target.value } : x
+                                ),
+                              })
+                            }
+                          >
+                            <option value={HERO_FALLBACK}>{HERO_FALLBACK}</option>
+                            {HERO_OPTIONS.map((h) => (
+                              <option key={`${p.playerKey}-${h.name}`} value={h.name}>
+                                {displayHeroName(h.name)}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">K</label>
+                          <Input
+                            value={String(p.kills)}
+                            onChange={(e) =>
+                              updateEntry(activeEntry.id, {
+                                players: activeEntry.players.map((x) =>
+                                  x.playerKey === p.playerKey ? { ...x, kills: Number(e.target.value || 0) } : x
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">D</label>
+                          <Input
+                            value={String(p.deaths)}
+                            onChange={(e) =>
+                              updateEntry(activeEntry.id, {
+                                players: activeEntry.players.map((x) =>
+                                  x.playerKey === p.playerKey ? { ...x, deaths: Number(e.target.value || 0) } : x
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">A</label>
+                          <Input
+                            value={String(p.assists)}
+                            onChange={(e) =>
+                              updateEntry(activeEntry.id, {
+                                players: activeEntry.players.map((x) =>
+                                  x.playerKey === p.playerKey ? { ...x, assists: Number(e.target.value || 0) } : x
+                                ),
+                              })
+                            }
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">K</label>
-                        <Input
-                          value={String(p.kills)}
-                          onChange={(e) =>
-                            setPlayers((ps) =>
-                              ps.map((x) => (x.playerKey === p.playerKey ? { ...x, kills: Number(e.target.value || 0) } : x))
-                            )
-                          }
-                        />
+
+                      <div className="mt-3 grid sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">DMG</label>
+                          <Input value={p.damage ?? ""} readOnly />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">H</label>
+                          <Input value={p.healing ?? ""} readOnly />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">MIT</label>
+                          <Input value={p.mitigation ?? ""} readOnly />
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">D</label>
-                        <Input
-                          value={String(p.deaths)}
-                          onChange={(e) =>
-                            setPlayers((ps) =>
-                              ps.map((x) => (x.playerKey === p.playerKey ? { ...x, deaths: Number(e.target.value || 0) } : x))
-                            )
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-display tracking-widest text-muted-foreground mb-1">A</label>
-                        <Input
-                          value={String(p.assists)}
-                          onChange={(e) =>
-                            setPlayers((ps) =>
-                              ps.map((x) => (x.playerKey === p.playerKey ? { ...x, assists: Number(e.target.value || 0) } : x))
-                            )
-                          }
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -435,17 +862,17 @@ export function UploadAndParse() {
         <CardContent className="p-6">
           <div className="flex items-center justify-between">
             <div className="font-display tracking-widest text-sm text-foreground">PREVIEW</div>
-            {screenshotUrl ? (
-              <a className="text-xs font-mono tracking-widest text-primary underline" href={screenshotUrl} target="_blank" rel="noreferrer">
+            {activeEntry?.screenshotUrl ? (
+              <a className="text-xs font-mono tracking-widest text-primary underline" href={activeEntry.screenshotUrl} target="_blank" rel="noreferrer">
                 OPEN BLOB
               </a>
             ) : null}
           </div>
 
           <div className="mt-4 rounded-xl border border-border bg-muted/20 overflow-hidden aspect-video flex items-center justify-center">
-            {previewUrl ? (
+            {activeEntry?.previewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="scoreboard preview" className="w-full h-full object-contain" />
+              <img src={activeEntry.previewUrl} alt="scoreboard preview" className="w-full h-full object-contain" />
             ) : (
               <div className="flex flex-col items-center text-muted-foreground">
                 <ImageIcon className="w-10 h-10" />
@@ -454,10 +881,10 @@ export function UploadAndParse() {
             )}
           </div>
 
-          <div className={cn("mt-4", rawText ? "" : "opacity-60")}>
+          <div className={cn("mt-4", activeEntry?.rawText ? "" : "opacity-60")}>
             <div className="font-display tracking-widest text-xs text-muted-foreground">RAW OCR TEXT</div>
             <pre className="mt-2 text-[11px] leading-5 font-mono text-muted-foreground whitespace-pre-wrap border border-border bg-card/40 rounded-xl p-3 max-h-[360px] overflow-auto">
-              {rawText || "—"}
+              {activeEntry?.rawText || "--"}
             </pre>
           </div>
         </CardContent>

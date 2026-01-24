@@ -1,65 +1,372 @@
-"use client";
+// src/lib/ocr/parse.ts
+import type { PlayerKey } from "@/types";
 
-import type { ParsedScreenshot, PlayerKey } from "@/types";
+type RowCandidate = {
+  line: string;
+  nums: number[];
+  index: number;
+};
 
-const PLAYERS: Array<{ key: PlayerKey; label: string }> = [
-  { key: "ridiculoid", label: "ridiculoid" },
-  { key: "buttstough", label: "buttstough" },
-];
+type StatWindow = {
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  healing: number;
+  mitigation: number;
+};
 
-function norm(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
+type ScoredWindow = {
+  stats: StatWindow;
+  score: number;
+};
 
-function pickHeroCandidate(line: string, playerLabel: string): string | undefined {
-  // Very heuristic: take first alphabetic token after the player name.
-  const tokens = line.split(/\s+/).filter(Boolean);
-  const idx = tokens.findIndex((t) => norm(t) === norm(playerLabel));
-  if (idx >= 0) {
-    for (let i = idx + 1; i < Math.min(tokens.length, idx + 6); i++) {
-      const t = tokens[i];
-      if (/^[A-Za-z][A-Za-z\-']{2,}$/.test(t) && norm(t) !== "k" && norm(t) !== "d" && norm(t) !== "a") {
-        return t;
+export type ParsedPlayerRow = {
+  playerKey: PlayerKey;
+  hero?: string | null; // not reliable from screenshot; leave null
+  kills: number;
+  deaths: number;
+  assists: number;
+  damage: number;
+  healing: number;
+  mitigation: number;
+};
+
+export type ParsedScoreboard = {
+  players: ParsedPlayerRow[];
+};
+
+export function parseScoreboardOcr(text: string): ParsedScoreboard {
+  const lines = (text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let rows = extractRowCandidates(lines);
+  const filtered = rows.filter((r) => isLikelyStatRow(r.nums));
+  if (filtered.length > 0) rows = filtered;
+
+  if (rows.length === 0) {
+    const allNums = extractNumbers(lines.join(" "));
+    if (allNums.length >= 6) {
+      rows = [];
+      for (let i = 0; i + 5 < allNums.length; i += 6) {
+        rows.push({ line: "", nums: allNums.slice(i, i + 6), index: i / 6 });
       }
     }
   }
-  return undefined;
-}
 
-function extractKDA(line: string): { kills?: number; deaths?: number; assists?: number } {
-  // Look for sequences like "12 6 9" or "12/6/9"
-  const slash = line.match(/(\d{1,3})\s*\/\s*(\d{1,3})\s*\/\s*(\d{1,3})/);
-  if (slash) {
-    return { kills: Number(slash[1]), deaths: Number(slash[2]), assists: Number(slash[3]) };
+  const byKey = new Map<PlayerKey, ParsedPlayerRow>();
+
+  const ridInline = findInlineStats(lines, "ridiculoid");
+  if (ridInline) byKey.set("ridiculoid", toParsedRowFromStats("ridiculoid", ridInline));
+
+  const buttInline = findInlineStats(lines, "buttstough");
+  if (buttInline) byKey.set("buttstough", toParsedRowFromStats("buttstough", buttInline));
+
+  const rid = byKey.has("ridiculoid") ? null : findBestRowByName(rows, "ridiculoid");
+  if (rid) byKey.set("ridiculoid", toParsedRow("ridiculoid", rid.nums));
+
+  const butt = byKey.has("buttstough") ? null : findBestRowByName(rows, "buttstough");
+  if (butt) byKey.set("buttstough", toParsedRow("buttstough", butt.nums));
+
+  if (byKey.size < 2) {
+    const remainingRows = rows.sort((a, b) => a.index - b.index);
+    const remainingKeys: PlayerKey[] = [];
+    if (!byKey.has("ridiculoid")) remainingKeys.push("ridiculoid");
+    if (!byKey.has("buttstough")) remainingKeys.push("buttstough");
+
+    let rowIdx = 0;
+    for (const key of remainingKeys) {
+      if (rowIdx >= remainingRows.length) break;
+      byKey.set(key, toParsedRow(key, remainingRows[rowIdx].nums));
+      rowIdx++;
+    }
   }
-  const nums = (line.match(/\d{1,4}/g) || []).map((n) => Number(n));
-  // Heuristic: first 3 numbers on the line are usually K/D/A.
-  if (nums.length >= 3) return { kills: nums[0], deaths: nums[1], assists: nums[2] };
-  return {};
+
+  const players: ParsedPlayerRow[] = [];
+  for (const key of ["ridiculoid", "buttstough"] as const) {
+    const row = byKey.get(key);
+    if (row) players.push(row);
+  }
+
+  return { players };
 }
 
-export function parseScoreboardOcr(rawText: string): ParsedScreenshot {
-  const lines = rawText
-    .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
 
-  const players = PLAYERS.map(({ key, label }) => {
-    const line =
-      lines.find((l) => norm(l).includes(norm(label))) ??
-      "";
+  let best: ScoredWindow | null = null;
 
-    const hero = line ? pickHeroCandidate(line, label) : undefined;
-    const { kills, deaths, assists } = line ? extractKDA(line) : {};
+  for (const line of lines) {
+    if (shouldSkipLine(line)) continue;
 
-    return {
-      playerKey: key,
-      hero,
-      kills,
-      deaths,
-      assists,
-    };
-  });
+    const tokens = line.split(/\s+/).filter(Boolean);
+    let nameIdx = -1;
 
-  return { rawText, players };
+    for (let i = 0; i < tokens.length; i++) {
+      const norm = normalizeToken(tokens[i]);
+      for (const target of targets) {
+        if (levenshtein(norm, target) <= 2) {
+          nameIdx = i;
+          break;
+        }
+      }
+      if (nameIdx !== -1) break;
+    }
+
+    if (nameIdx === -1) continue;
+
+    const nums = parseNumbersFromTokens(tokens.slice(nameIdx + 1));
+    const scored = pickBestStatWindowWithScore(nums);
+    if (scored && (!best || scored.score > best.score)) {
+      best = scored;
+    }
+  }
+
+  return best?.stats ?? null;
+}
+
+function toParsedRowFromStats(playerKey: PlayerKey, stats: StatWindow): ParsedPlayerRow {
+  return {
+    playerKey,
+    hero: null,
+    kills: stats.kills,
+    deaths: stats.deaths,
+    assists: stats.assists,
+    damage: stats.damage,
+    healing: stats.healing,
+    mitigation: stats.mitigation,
+  };
+}
+
+function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerRow {
+  const safeNums = nums ?? [];
+  const best = pickBestStatWindowWithScore(safeNums);
+  const stats = best?.stats ?? {
+    kills: safeNums.at(-6) ?? 0,
+    deaths: safeNums.at(-5) ?? 0,
+    assists: safeNums.at(-4) ?? 0,
+    damage: safeNums.at(-3) ?? 0,
+    healing: safeNums.at(-2) ?? 0,
+    mitigation: safeNums.at(-1) ?? 0,
+  };
+
+  return {
+    playerKey,
+    hero: null,
+    kills: stats.kills,
+    deaths: stats.deaths,
+    assists: stats.assists,
+    damage: stats.damage,
+    healing: stats.healing,
+    mitigation: stats.mitigation,
+  };
+}
+
+function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
+  if (nums.length < 6) return null;
+
+  let best: ScoredWindow | null = null;
+
+  for (let i = 0; i + 5 < nums.length; i++) {
+    const k = nums[i];
+    const d = nums[i + 1];
+    const a = nums[i + 2];
+    const dmg = nums[i + 3];
+    const heal = nums[i + 4];
+    const mit = nums[i + 5];
+
+    const score = scoreStatWindow(k, d, a, dmg, heal, mit);
+    if (score === null) continue;
+
+    if (!best || score > best.score) {
+      best = { stats: { kills: k, deaths: d, assists: a, damage: dmg, healing: heal, mitigation: mit }, score };
+    }
+  }
+
+  return best;
+}
+
+function scoreStatWindow(k: number, d: number, a: number, dmg: number, heal: number, mit: number): number | null {
+  if (![k, d, a, dmg, heal, mit].every((n) => Number.isFinite(n) && n >= 0)) return null;
+
+  const kdaMax = 80;
+  if (k > kdaMax || d > kdaMax || a > kdaMax) return null;
+
+  const statMax = 200000;
+  if (dmg > statMax || heal > statMax || mit > statMax) return null;
+
+  let score = 0;
+
+  if (k > 0 || d > 0 || a > 0) score += 5;
+  if (dmg >= 100) score += 3;
+  if (heal >= 100) score += 2;
+  if (mit >= 100) score += 2;
+
+  const hugePenalty = (n: number) => (n >= 100000 ? 5 : 0);
+  score -= hugePenalty(dmg);
+  score -= hugePenalty(heal);
+  score -= hugePenalty(mit);
+
+  return score;
+}
+
+function extractRowCandidates(lines: string[]): RowCandidate[] {
+  const rows: RowCandidate[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let best: RowCandidate | null = null;
+
+    for (let span = 1; span <= 3 && i + span - 1 < lines.length; span++) {
+      const line = lines.slice(i, i + span).join(" ");
+      const nums = extractNumbers(line);
+      if (nums.length >= 6) {
+        best = { line, nums, index: i };
+        break;
+      }
+    }
+
+    if (best) rows.push(best);
+  }
+
+  return rows;
+}
+
+function isLikelyStatRow(nums: number[]): boolean {
+  return pickBestStatWindowWithScore(nums) !== null;
+}
+
+function findBestRowByName(rows: RowCandidate[], playerKey: PlayerKey): RowCandidate | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RIDICUL0ID", "RI0ICULOID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  let best: { row: RowCandidate; dist: number; score: number } | null = null;
+
+  for (const row of rows) {
+    const tokens = extractWordTokens(row.line);
+
+    let minDist = Infinity;
+
+    for (const t of tokens) {
+      const norm = normalizeToken(t);
+
+      for (const target of targets) {
+        const dist = levenshtein(norm, target);
+        if (dist < minDist) minDist = dist;
+      }
+    }
+
+    if (minDist > 2) continue;
+
+    const scored = pickBestStatWindowWithScore(row.nums);
+    if (!scored) continue;
+
+    if (!best || scored.score > best.score || (scored.score === best.score && minDist < best.dist)) {
+      best = { row, dist: minDist, score: scored.score };
+    }
+  }
+
+  return best ? best.row : null;
+}
+
+function extractWordTokens(line: string): string[] {
+  const m = line.toUpperCase().match(/[A-Z0-9]{4,}/g);
+  return m ?? [];
+}
+
+function normalizeToken(token: string): string {
+  return token
+    .toUpperCase()
+    .replace(/0/g, "O")
+    .replace(/1/g, "I")
+    .replace(/5/g, "S")
+    .replace(/[^A-Z]/g, "");
+}
+
+function shouldSkipLine(line: string): boolean {
+  const upper = line.toUpperCase();
+  return upper.includes("SUMMARY") || upper.includes("TEAMS") || upper.includes("PERSONAL") || upper.includes("ENTER CHAT");
+}
+
+function parseNumbersFromTokens(tokens: string[]): number[] {
+  const nums: number[] = [];
+  for (const token of tokens) {
+    const upper = token.toUpperCase();
+    if (upper === "A") {
+      nums.push(4);
+      continue;
+    }
+    if (upper === "O") {
+      nums.push(0);
+      continue;
+    }
+    const found = extractNumbers(token);
+    if (found.length) nums.push(...found);
+  }
+
+  if (nums.length === 5 && nums[2] >= 100) {
+    return [nums[0], nums[1], 0, nums[2], nums[3], nums[4]];
+  }
+
+  return nums;
+}
+
+function extractNumbers(line: string): number[] {
+  const matches = line.match(/\d[\d,.\s]*\d|\d/g);
+  if (!matches) return [];
+
+  return matches
+    .map((raw) => raw.replace(/\s+/g, ""))
+    .map((raw) => normalizeToInt(raw))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .map((n) => Math.trunc(n));
+}
+
+function normalizeToInt(s: string): number {
+  if (!s) return NaN;
+
+  if (s.includes(",")) {
+    const cleaned = s.replace(/,/g, "").replace(/[^\d]/g, "");
+    return cleaned ? Number(cleaned) : NaN;
+  }
+
+  const dotIdx = s.indexOf(".");
+  if (dotIdx !== -1) {
+    const after = s.slice(dotIdx + 1);
+    if (/^\d{3}$/.test(after)) {
+      const cleaned = s.replace(/\./g, "").replace(/[^\d]/g, "");
+      return cleaned ? Number(cleaned) : NaN;
+    }
+  }
+
+  const cleaned = s.replace(/[^\d]/g, "");
+  return cleaned ? Number(cleaned) : NaN;
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const v0 = new Array(b.length + 1).fill(0);
+  const v1 = new Array(b.length + 1).fill(0);
+
+  for (let i = 0; i <= b.length; i++) v0[i] = i;
+
+  for (let i = 0; i < a.length; i++) {
+    v1[0] = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
+  }
+
+  return v1[b.length];
 }

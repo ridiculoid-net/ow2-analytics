@@ -1,10 +1,13 @@
-import { listMatches, listMatchStats } from "@/lib/db";
-import { Card, CardContent, Badge } from "@/components/ui";
+﻿import { listMatches, listMatchStats } from "@/lib/db";
+import { deleteMatchAction } from "@/app/actions";
+import { Card, CardContent, Badge, Button } from "@/components/ui";
 import Link from "next/link";
 
 function kda(k: number, d: number, a: number) {
   return `${k}/${d}/${a}`;
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function MatchesPage() {
   const matches = await listMatches(100);
@@ -20,7 +23,7 @@ export default async function MatchesPage() {
           </p>
         </div>
         <Link href="/import" className="text-xs font-mono tracking-widest text-primary underline">
-          IMPORT MORE →
+          IMPORT MORE ->
         </Link>
       </div>
 
@@ -40,7 +43,7 @@ export default async function MatchesPage() {
                     </Badge>
                     <div>
                       <div className="font-display tracking-widest text-sm text-foreground">
-                        {m.map} • {m.mode}
+                        {m.map} - {m.mode}
                       </div>
                       <div className="mt-1 text-[11px] font-mono tracking-widest text-muted-foreground">
                         {new Date(m.played_at).toLocaleString()}
@@ -51,24 +54,35 @@ export default async function MatchesPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono tracking-widest text-muted-foreground">
                     <div className="border border-border rounded-lg px-3 py-2 bg-muted/10">
                       <div className="text-primary">RIDICULOID</div>
-                      <div className="mt-1">{rid ? `${rid.hero} • ${kda(rid.kills, rid.deaths, rid.assists)}` : "—"}</div>
+                      <div className="mt-1">{rid ? `${rid.hero} - ${kda(rid.kills, rid.deaths, rid.assists)}` : "--"}</div>
                     </div>
                     <div className="border border-border rounded-lg px-3 py-2 bg-muted/10">
                       <div className="text-primary">BUTTSTOUGH</div>
-                      <div className="mt-1">{but ? `${but.hero} • ${kda(but.kills, but.deaths, but.assists)}` : "—"}</div>
+                      <div className="mt-1">{but ? `${but.hero} - ${kda(but.kills, but.deaths, but.assists)}` : "--"}</div>
                     </div>
                   </div>
 
-                  {m.screenshot_url ? (
-                    <a
-                      href={m.screenshot_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-mono tracking-widest text-primary underline"
-                    >
-                      VIEW SCREENSHOT →
-                    </a>
-                  ) : null}
+                  <div className="flex items-center gap-3">
+                    {m.screenshot_url ? (
+                      <a
+                        href={m.screenshot_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-mono tracking-widest text-primary underline"
+                      >
+                        VIEW SCREENSHOT ->
+                      </a>
+                    ) : null}
+                    <Link href={`/matches/${m.id}/edit`} className="text-xs font-mono tracking-widest text-primary underline">
+                      EDIT
+                    </Link>
+                    <form action={deleteMatchAction}>
+                      <input type="hidden" name="matchId" value={m.id} />
+                      <Button type="submit" variant="outline" className="text-xs font-mono tracking-widest">
+                        DELETE
+                      </Button>
+                    </form>
+                  </div>
                 </div>
               </CardContent>
             </Card>

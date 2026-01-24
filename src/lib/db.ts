@@ -57,6 +57,42 @@ export async function createMatch(input: CreateMatchInput) {
   return match;
 }
 
+export async function updateMatch(matchId: string, input: CreateMatchInput) {
+  const sb = supabaseService();
+
+  const { error: matchErr } = await sb
+    .from("matches")
+    .update({
+      played_at: input.playedAt,
+      mode: input.mode,
+      result: input.result,
+      map: input.map,
+      notes: input.notes ?? null,
+      screenshot_url: input.screenshotUrl ?? null,
+    })
+    .eq("id", matchId);
+
+  if (matchErr) throw new Error(matchErr.message);
+
+  const { error: deleteErr } = await sb.from("match_player_stats").delete().eq("match_id", matchId);
+  if (deleteErr) throw new Error(deleteErr.message);
+
+  const rows = input.players.map((p) => ({
+    match_id: matchId,
+    player_key: p.playerKey,
+    hero: p.hero,
+    kills: p.kills,
+    deaths: p.deaths,
+    assists: p.assists,
+    damage: p.damage ?? null,
+    healing: p.healing ?? null,
+    mitigation: p.mitigation ?? null,
+  }));
+
+  const { error: statsErr } = await sb.from("match_player_stats").insert(rows);
+  if (statsErr) throw new Error(statsErr.message);
+}
+
 export async function listMatches(limit = 50) {
   const sb = supabaseService();
 
@@ -70,6 +106,19 @@ export async function listMatches(limit = 50) {
   return data ?? [];
 }
 
+export async function getMatch(matchId: string) {
+  const sb = supabaseService();
+
+  const { data, error } = await sb
+    .from("matches")
+    .select("id, played_at, mode, result, map, notes, screenshot_url, created_at")
+    .eq("id", matchId)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function listMatchStats(matchIds: string[]) {
   if (matchIds.length === 0) return [];
   const sb = supabaseService();
@@ -81,6 +130,16 @@ export async function listMatchStats(matchIds: string[]) {
 
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+export async function deleteMatch(matchId: string) {
+  const sb = supabaseService();
+
+  const { error: statsErr } = await sb.from("match_player_stats").delete().eq("match_id", matchId);
+  if (statsErr) throw new Error(statsErr.message);
+
+  const { error: matchErr } = await sb.from("matches").delete().eq("id", matchId);
+  if (matchErr) throw new Error(matchErr.message);
 }
 
 export async function fetchAllForDashboard(days = 60) {
