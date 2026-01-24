@@ -1,17 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Header } from "@/components/header";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OW2 Analytics — ridiculoid + buttstough",
-  description: "Screenshot → OCR → dashboards. Maps, heroes, KDA, streaks, duo stats.",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
+  title: "OW2 Analytics - ridiculoid + buttstough",
+  description: "Screenshot -> OCR -> dashboards. Maps, heroes, KDA, streaks, duo stats.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
     apple: "/favicon.svg",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
