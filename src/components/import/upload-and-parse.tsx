@@ -217,8 +217,8 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
   let best: { row: RowCandidate; score: number; dist: number } | null = null;
 
   for (const row of rows) {
-    const dist = Math.abs(row.index - index);
-    if (dist > maxDistance) continue;
+    const dist = row.index - index;
+    if (dist < 0 || dist > maxDistance) continue;
     const scored = pickBestStatWindowWithScore(row.nums);
     if (!scored) continue;
 
