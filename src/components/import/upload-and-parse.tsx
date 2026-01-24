@@ -776,7 +776,7 @@ async function preprocessImageForStatsVariants(file: File): Promise<string[]> {
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return url;
+    if (!ctx) return [url];
 
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -792,7 +792,7 @@ async function preprocessImageForStatsVariants(file: File): Promise<string[]> {
     cropCanvas.width = cropW;
     cropCanvas.height = cropH;
     const cropCtx = cropCanvas.getContext("2d");
-    if (!cropCtx) return canvas.toDataURL("image/png");
+    if (!cropCtx) return [canvas.toDataURL("image/png")];
 
     cropCtx.imageSmoothingEnabled = true;
     cropCtx.imageSmoothingQuality = "high";
