@@ -575,7 +575,7 @@ function detectKdaOrder(lines: string[]): KdaOrder {
     }
   }
 
-  let best: KdaOrder = "KDA";
+  let best: KdaOrder = "EAD";
   let bestCount = -1;
   for (const key of Object.keys(counts) as KdaOrder[]) {
     if (counts[key] > bestCount) {
@@ -584,7 +584,7 @@ function detectKdaOrder(lines: string[]): KdaOrder {
     }
   }
 
-  return bestCount > 0 ? best : "KDA";
+  return bestCount > 0 ? best : "EAD";
 }
 
 function normalizeKdaOrder(stats: StatWindow, kdaOrder: KdaOrder): StatWindow {

@@ -630,7 +630,7 @@ function detectKdaOrder(lines: string[]): KdaOrder {
     }
   }
 
-  let best: KdaOrder = "KDA";
+  let best: KdaOrder = "EAD";
   let bestCount = -1;
   for (const key of Object.keys(counts) as KdaOrder[]) {
     if (counts[key] > bestCount) {
@@ -639,7 +639,7 @@ function detectKdaOrder(lines: string[]): KdaOrder {
     }
   }
 
-  return bestCount > 0 ? best : "KDA";
+  return bestCount > 0 ? best : "EAD";
 }
 
 function normalizeKdaOrder(stats: StatWindow, kdaOrder: KdaOrder): StatWindow {
@@ -692,6 +692,20 @@ function applyGrayscaleAndContrast(data: Uint8ClampedArray, contrast: number) {
   }
 }
 
+function applyThreshold(data: Uint8ClampedArray, threshold: number) {
+  const t = clampByte(threshold);
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const v = gray >= t ? 255 : 0;
+    data[i] = v;
+    data[i + 1] = v;
+    data[i + 2] = v;
+  }
+}
+
 async function preprocessImage(file: File): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
@@ -738,6 +752,70 @@ async function preprocessImage(file: File): Promise<string> {
     cropCtx.putImageData(imageData, 0, 0);
 
     return cropCanvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function preprocessImageForStatsVariants(file: File): Promise<string[]> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    await img.decode();
+
+    const minWidth = 3000;
+    const minHeight = 1600;
+    const scale = Math.max(1, minWidth / img.width, minHeight / img.height);
+
+    const width = Math.round(img.width * scale);
+    const height = Math.round(img.height * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return url;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // Tighter crop around the scoreboard to improve digit recognition.
+    const cropW = Math.round(width * 0.5);
+    const cropH = Math.round(height * 0.33);
+    const cropX = Math.round((width - cropW) / 2);
+    const cropY = Math.round(height * 0.18);
+
+    const cropCanvas = document.createElement("canvas");
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext("2d");
+    if (!cropCtx) return canvas.toDataURL("image/png");
+
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.imageSmoothingQuality = "high";
+    cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const variants: string[] = [];
+    const base = cropCtx.getImageData(0, 0, cropW, cropH);
+
+    const makeVariant = (contrast: number, threshold: number | null) => {
+      const copy = new ImageData(new Uint8ClampedArray(base.data), base.width, base.height);
+      applyGrayscaleAndContrast(copy.data, contrast);
+      if (threshold !== null) applyThreshold(copy.data, threshold);
+      cropCtx.putImageData(copy, 0, 0);
+      variants.push(cropCanvas.toDataURL("image/png"));
+    };
+
+    // Multiple passes to catch small digits that OCR misses.
+    makeVariant(80, null);
+    makeVariant(100, 150);
+    makeVariant(110, 170);
+    makeVariant(120, 190);
+
+    return variants;
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -824,13 +902,32 @@ export function UploadAndParse() {
     setProgress(0);
 
     const preprocessed = await preprocessImage(selected);
+    const statsVariants = await preprocessImageForStatsVariants(selected);
 
-    const { data } = await Tesseract.recognize(preprocessed, "eng", {
+    const { data: baseData } = await Tesseract.recognize(preprocessed, "eng", {
       logger: (m) => {
-        if (m.status === "recognizing text") setProgress(Math.round((m.progress ?? 0) * 100));
+        if (m.status === "recognizing text") setProgress(Math.round((m.progress ?? 0) * 20));
       },
     });
-    return data.text ?? "";
+
+    const statsTexts: string[] = [];
+    for (let i = 0; i < statsVariants.length; i++) {
+      const { data } = await Tesseract.recognize(statsVariants[i], "eng", {
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,./",
+        tessedit_pageseg_mode: "6",
+        logger: (m) => {
+          if (m.status === "recognizing text") {
+            const base = 20 + Math.round(((i + (m.progress ?? 0)) / statsVariants.length) * 80);
+            setProgress(base);
+          }
+        },
+      });
+      if (data.text) statsTexts.push(data.text);
+    }
+
+    const baseText = baseData.text ?? "";
+    const statsText = statsTexts.join("\n\n");
+    return `${baseText}\n\n---STATS PASS---\n\n${statsText}`.trim();
   }
 
   async function handleStartAll() {
