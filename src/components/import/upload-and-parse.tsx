@@ -51,6 +51,8 @@ type ScoredWindow = {
   score: number;
 };
 
+type KdaOrder = "KDA" | "KAD";
+
 type ImportEntry = {
   id: string;
   file: File;
@@ -112,6 +114,8 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     .map((l) => l.trim())
     .filter(Boolean);
 
+  const kdaOrder = detectKdaOrder(lines);
+
   let rows = extractRowCandidates(lines);
   const filtered = rows.filter((r) => isLikelyStatRow(r.nums));
   if (filtered.length > 0) rows = filtered;
@@ -139,7 +143,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
   for (const key of PLAYER_ORDER) {
     const stats = findInlineStats(lines, key);
     if (stats) {
-      byKey.set(key, toParsedRowFromStats(key, stats));
+      byKey.set(key, toParsedRowFromStats(key, stats, kdaOrder));
     }
   }
 
@@ -150,7 +154,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     if (nameIdx !== undefined) {
       const near = findNearestRowByIndex(rows, nameIdx, 2, key);
       if (near) {
-        byKey.set(key, toParsedRow(key, near.nums));
+        byKey.set(key, toParsedRow(key, near.nums, kdaOrder));
         used.add(near.index);
         continue;
       }
@@ -158,7 +162,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
 
     const match = findBestRowByName(rows, key);
     if (match) {
-      byKey.set(key, toParsedRow(key, match.nums));
+      byKey.set(key, toParsedRow(key, match.nums, kdaOrder));
       used.add(match.index);
     }
   }
@@ -170,7 +174,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     if (nameIdx === undefined) continue;
     const stats = findStatsNearLine(lines, nameIdx, 2, key);
     if (stats) {
-      byKey.set(key, toParsedRowFromStats(key, stats));
+      byKey.set(key, toParsedRowFromStats(key, stats, kdaOrder));
     }
   }
 
@@ -183,7 +187,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
       .sort((a, b) => a.index - b.index);
 
     for (let i = 0; i < remainingKeys.length && i < remainingRows.length; i++) {
-      byKey.set(remainingKeys[i], toParsedRow(remainingKeys[i], remainingRows[i].nums));
+      byKey.set(remainingKeys[i], toParsedRow(remainingKeys[i], remainingRows[i].nums, kdaOrder));
     }
   }
 
@@ -295,20 +299,21 @@ function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | nu
   return best?.stats ?? null;
 }
 
-function toParsedRowFromStats(playerKey: PlayerKey, stats: StatWindow): ParsedPlayerRow {
+function toParsedRowFromStats(playerKey: PlayerKey, stats: StatWindow, kdaOrder: KdaOrder): ParsedPlayerRow {
+  const normalized = normalizeKdaOrder(stats, kdaOrder);
   return {
     playerKey,
     hero: null,
-    kills: stats.kills,
-    deaths: stats.deaths,
-    assists: stats.assists,
-    damage: stats.damage,
-    healing: stats.healing,
-    mitigation: stats.mitigation,
+    kills: normalized.kills,
+    deaths: normalized.deaths,
+    assists: normalized.assists,
+    damage: normalized.damage,
+    healing: normalized.healing,
+    mitigation: normalized.mitigation,
   };
 }
 
-function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerRow {
+function toParsedRow(playerKey: PlayerKey, nums: number[] | null, kdaOrder: KdaOrder): ParsedPlayerRow {
   const safeNums = nums ?? [];
   const best = pickBestStatWindowWithScore(safeNums);
   const stats = best?.stats ?? {
@@ -319,16 +324,17 @@ function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerR
     healing: safeNums.at(-2) ?? 0,
     mitigation: safeNums.at(-1) ?? 0,
   };
+  const normalized = normalizeKdaOrder(stats, kdaOrder);
 
   return {
     playerKey,
     hero: null,
-    kills: stats.kills,
-    deaths: stats.deaths,
-    assists: stats.assists,
-    damage: stats.damage,
-    healing: stats.healing,
-    mitigation: stats.mitigation,
+    kills: normalized.kills,
+    deaths: normalized.deaths,
+    assists: normalized.assists,
+    damage: normalized.damage,
+    healing: normalized.healing,
+    mitigation: normalized.mitigation,
   };
 }
 
@@ -589,6 +595,30 @@ function normalizeToInt(s: string): number {
 
   const cleaned = s.replace(/[^\d]/g, "");
   return cleaned ? Number(cleaned) : NaN;
+}
+
+function detectKdaOrder(lines: string[]): KdaOrder {
+  let sawKda = false;
+  let sawKad = false;
+
+  for (const line of lines) {
+    const letters = line.toUpperCase().replace(/[^A-Z]/g, "");
+    if (!sawKda && letters.includes("KDA")) sawKda = true;
+    if (!sawKad && letters.includes("KAD")) sawKad = true;
+    if (sawKda && sawKad) break;
+  }
+
+  if (sawKad && !sawKda) return "KAD";
+  return "KDA";
+}
+
+function normalizeKdaOrder(stats: StatWindow, kdaOrder: KdaOrder): StatWindow {
+  if (kdaOrder === "KDA") return stats;
+  return {
+    ...stats,
+    deaths: stats.assists,
+    assists: stats.deaths,
+  };
 }
 
 function levenshtein(a: string, b: string): number {
