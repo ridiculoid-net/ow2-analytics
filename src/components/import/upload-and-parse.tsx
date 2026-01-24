@@ -51,7 +51,7 @@ type ScoredWindow = {
   score: number;
 };
 
-type KdaOrder = "KDA" | "KAD";
+type KdaOrder = "KDA" | "KAD" | "EAD" | "EDA";
 
 type ImportEntry = {
   id: string;
@@ -598,7 +598,7 @@ function normalizeToInt(s: string): number {
 }
 
 function detectKdaOrder(lines: string[]): KdaOrder {
-  const counts: Record<KdaOrder, number> = { KDA: 0, KAD: 0 };
+  const counts: Record<KdaOrder, number> = { KDA: 0, KAD: 0, EAD: 0, EDA: 0 };
 
   for (const line of lines) {
     const tokens = line
@@ -609,25 +609,41 @@ function detectKdaOrder(lines: string[]): KdaOrder {
 
     const letterOrder: string[] = [];
     for (const token of tokens) {
-      if ([...token].every((ch) => ch === "K" || ch === "D" || ch === "A")) {
+      if ([...token].every((ch) => ch === "K" || ch === "D" || ch === "A" || ch === "E")) {
         letterOrder.push(...token);
       }
     }
 
+    const eIdx = letterOrder.indexOf("E");
     const kIdx = letterOrder.indexOf("K");
     const dIdx = letterOrder.indexOf("D");
     const aIdx = letterOrder.indexOf("A");
-    if (kIdx === -1 || dIdx === -1 || aIdx === -1) continue;
+    const killIdx = eIdx !== -1 ? eIdx : kIdx;
+    if (killIdx === -1 || dIdx === -1 || aIdx === -1) continue;
 
-    if (aIdx < dIdx) counts.KAD++;
-    else counts.KDA++;
+    if (eIdx !== -1) {
+      if (aIdx < dIdx) counts.EAD++;
+      else counts.EDA++;
+    } else {
+      if (aIdx < dIdx) counts.KAD++;
+      else counts.KDA++;
+    }
   }
 
-  return counts.KAD > counts.KDA ? "KAD" : "KDA";
+  let best: KdaOrder = "KDA";
+  let bestCount = -1;
+  for (const key of Object.keys(counts) as KdaOrder[]) {
+    if (counts[key] > bestCount) {
+      bestCount = counts[key];
+      best = key;
+    }
+  }
+
+  return bestCount > 0 ? best : "KDA";
 }
 
 function normalizeKdaOrder(stats: StatWindow, kdaOrder: KdaOrder): StatWindow {
-  if (kdaOrder === "KDA") return stats;
+  if (kdaOrder === "KDA" || kdaOrder === "EDA") return stats;
   return {
     ...stats,
     deaths: stats.assists,
