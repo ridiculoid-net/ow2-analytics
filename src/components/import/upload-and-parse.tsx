@@ -243,6 +243,9 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
 }
 
 function findStatsNearLine(lines: string[], index: number, maxDistance: number, playerKey: PlayerKey): StatWindow | null {
+  const combined = tryCombinePrevKda(lines, index, playerKey);
+  if (combined) return combined;
+
   const nums: number[] = [];
   for (let i = index; i <= Math.min(lines.length - 1, index + maxDistance); i++) {
     if (shouldSkipLine(lines[i])) continue;
@@ -336,7 +339,7 @@ function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
   let best = base;
 
   let missingBest: ScoredWindow | null = null;
-  for (const insertAt of [0, 1, 2]) {
+  for (const insertAt of [0, 1, 2, 5]) {
     const withZero = nums.slice();
     withZero.splice(insertAt, 0, 0);
     const candidate = bestStatWindowFromNums(withZero);
@@ -505,6 +508,29 @@ function lineHasAnyPlayerName(line: string): boolean {
 function lineHasOtherPlayerName(line: string, playerKey: PlayerKey): boolean {
   const otherKey: PlayerKey = playerKey === "ridiculoid" ? "buttstough" : "ridiculoid";
   return lineHasPlayerName(line, otherKey);
+}
+
+function tryCombinePrevKda(lines: string[], index: number, playerKey: PlayerKey): StatWindow | null {
+  if (index <= 0) return null;
+  const currentLine = lines[index];
+  if (!lineHasPlayerName(currentLine, playerKey)) return null;
+
+  const currentNums = extractNumbers(currentLine);
+  if (currentNums.length < 3 || currentNums.length > 4) return null;
+
+  // Likely DMG/H/MIT line, sometimes K/D/A are on the previous line.
+  const prevLine = lines[index - 1];
+  if (lineHasAnyPlayerName(prevLine)) return null;
+  const prevNums = extractNumbers(prevLine);
+  if (prevNums.length < 3) return null;
+
+  const kda = prevNums.slice(-3);
+  if (!kda.every((n) => n <= 80)) return null;
+
+  const dmgBlock = currentNums.slice(0, 3);
+  const combinedNums = [...kda, ...dmgBlock];
+  const scored = pickBestStatWindowWithScore(combinedNums);
+  return scored?.stats ?? null;
 }
 
 function shouldSkipLine(line: string): boolean {
