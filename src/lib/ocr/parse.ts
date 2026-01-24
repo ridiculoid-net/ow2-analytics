@@ -86,6 +86,14 @@ export function parseScoreboardOcr(text: string): ParsedScoreboard {
     if (match) byKey.set(key, toParsedRow(key, match.nums));
   }
 
+  for (const key of ["ridiculoid", "buttstough"] as const) {
+    if (byKey.has(key)) continue;
+    const nameIdx = foundNameLine.get(key);
+    if (nameIdx === undefined) continue;
+    const stats = findStatsNearLine(lines, nameIdx, 2);
+    if (stats) byKey.set(key, toParsedRowFromStats(key, stats));
+  }
+
   // Fallback only if we never saw either name.
   const sawAnyName = foundNameLine.size > 0;
   if (!sawAnyName && byKey.size < 2) {
@@ -154,6 +162,17 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
   }
 
   return best?.row ?? null;
+}
+
+function findStatsNearLine(lines: string[], index: number, maxDistance: number): StatWindow | null {
+  const nums: number[] = [];
+  for (let i = index; i <= Math.min(lines.length - 1, index + maxDistance); i++) {
+    if (shouldSkipLine(lines[i])) continue;
+    nums.push(...extractNumbers(lines[i]));
+    if (nums.length >= 6) break;
+  }
+  const scored = pickBestStatWindowWithScore(nums);
+  return scored?.stats ?? null;
 }
 
 function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | null {

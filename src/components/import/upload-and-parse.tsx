@@ -163,6 +163,17 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     }
   }
 
+  // 1b) If still missing, try to build stats from the name line + next lines
+  for (const key of PLAYER_ORDER) {
+    if (byKey.has(key)) continue;
+    const nameIdx = foundNameLine.get(key);
+    if (nameIdx === undefined) continue;
+    const stats = findStatsNearLine(lines, nameIdx, 2);
+    if (stats) {
+      byKey.set(key, toParsedRowFromStats(key, stats));
+    }
+  }
+
   // 2) Fallback: assign remaining rows top-to-bottom
   const sawAnyName = foundNameLine.size > 0;
   const remainingKeys = PLAYER_ORDER.filter((k) => !byKey.has(k));
@@ -228,6 +239,17 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
   }
 
   return best?.row ?? null;
+}
+
+function findStatsNearLine(lines: string[], index: number, maxDistance: number): StatWindow | null {
+  const nums: number[] = [];
+  for (let i = index; i <= Math.min(lines.length - 1, index + maxDistance); i++) {
+    if (shouldSkipLine(lines[i])) continue;
+    nums.push(...extractNumbers(lines[i]));
+    if (nums.length >= 6) break;
+  }
+  const scored = pickBestStatWindowWithScore(nums);
+  return scored?.stats ?? null;
 }
 
 function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | null {
