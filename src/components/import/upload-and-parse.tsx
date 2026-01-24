@@ -569,11 +569,27 @@ async function preprocessImage(file: File): Promise<string> {
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, 0, 0, width, height);
 
-    const imageData = ctx.getImageData(0, 0, width, height);
-    applyGrayscaleAndContrast(imageData.data, 40);
-    ctx.putImageData(imageData, 0, 0);
+    // Crop to the central scoreboard region to reduce OCR noise.
+    const cropW = Math.round(width * 0.7);
+    const cropH = Math.round(height * 0.55);
+    const cropX = Math.round((width - cropW) / 2);
+    const cropY = Math.round((height - cropH) / 2);
 
-    return canvas.toDataURL("image/png");
+    const cropCanvas = document.createElement("canvas");
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext("2d");
+    if (!cropCtx) return canvas.toDataURL("image/png");
+
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.imageSmoothingQuality = "high";
+    cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const imageData = cropCtx.getImageData(0, 0, cropW, cropH);
+    applyGrayscaleAndContrast(imageData.data, 60);
+    cropCtx.putImageData(imageData, 0, 0);
+
+    return cropCanvas.toDataURL("image/png");
   } finally {
     URL.revokeObjectURL(url);
   }
