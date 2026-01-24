@@ -239,7 +239,8 @@ function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | nu
       continue;
     }
 
-    const nums = parseNumbersFromTokens(tokens.slice(nameIdx + 1));
+    const endIdx = findSplitIndex(tokens.slice(nameIdx + 1), otherKey);
+    const nums = parseNumbersFromTokens(tokens.slice(nameIdx + 1, nameIdx + 1 + endIdx));
     if (nums.length < 6) continue;
     const scored = pickBestStatWindowWithScore(nums);
     if (scored && (!best || scored.score > best.score)) {
@@ -468,6 +469,15 @@ function lineHasAnyPlayerName(line: string): boolean {
 function lineHasOtherPlayerName(line: string, playerKey: PlayerKey): boolean {
   const otherKey: PlayerKey = playerKey === "ridiculoid" ? "buttstough" : "ridiculoid";
   return lineHasPlayerName(line, otherKey);
+}
+
+function findSplitIndex(tokens: string[], otherKey: PlayerKey): number {
+  for (let i = 0; i < tokens.length; i++) {
+    if (lineHasPlayerName(tokens[i], otherKey)) {
+      return i;
+    }
+  }
+  return tokens.length;
 }
 
 function tryCombinePrevKda(lines: string[], index: number, playerKey: PlayerKey): StatWindow | null {
