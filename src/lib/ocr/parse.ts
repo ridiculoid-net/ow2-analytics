@@ -500,11 +500,15 @@ function parseNumbersFromTokens(tokens: string[]): number[] {
       nums.push(0);
       continue;
     }
+    if (upper === "MN") {
+      nums.push(11);
+      continue;
+    }
     if (/^[IL|]+$/.test(upper)) {
       nums.push(Number("1".repeat(upper.length)));
       continue;
     }
-    const normalized = upper.replace(/[IL|]/g, "1");
+    const normalized = upper.replace(/MN/g, "11").replace(/[IL|]/g, "1");
     const found = extractNumbers(normalized);
     if (found.length) nums.push(...found);
   }
