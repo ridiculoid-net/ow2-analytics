@@ -23,7 +23,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-background antialiased">
+      <body className="min-h-screen bg-background antialiased relative overflow-x-hidden">
+        <div className="fixed inset-0 -z-10 bg-arena bg-grid noise" />
+        <div className="fixed inset-0 -z-10 pointer-events-none scanlines opacity-30" />
         <ThemeProvider>
           <Header />
           <main className="relative">{children}</main>

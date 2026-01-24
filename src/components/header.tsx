@@ -24,16 +24,16 @@ export function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-50 w-full border-b border-primary/30 bg-background/80 backdrop-blur-xl glow-sm">
       <div className="absolute inset-0 scanlines pointer-events-none opacity-30" />
       <div className="container mx-auto px-4 relative">
         <div className="flex h-14 md:h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2 group" onClick={() => setMobileOpen(false)}>
-            <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-primary/20 border border-primary/50 flex items-center justify-center">
+            <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-primary/15 border border-primary/40 flex items-center justify-center glow-sm">
               <Activity className="w-4 h-4 md:w-5 md:h-5 text-primary" />
             </div>
             <div className="flex flex-col leading-none">
-              <span className="font-display text-sm md:text-base tracking-wider text-foreground group-hover:text-primary transition-colors">
+              <span className="font-display text-sm md:text-base tracking-wider text-foreground group-hover:text-primary transition-colors text-glow">
                 OW2 ANALYTICS
               </span>
               <span className="font-mono text-[10px] md:text-xs text-muted-foreground tracking-widest">
@@ -54,7 +54,7 @@ export function Header() {
                   className={cn(
                     "px-3 py-2 rounded-lg text-xs font-display tracking-widest transition-all flex items-center gap-2",
                     active
-                      ? "bg-primary/15 text-primary border border-primary/40"
+                      ? "bg-primary/15 text-primary border border-primary/40 glow-sm"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/40 border border-transparent"
                   )}
                 >
@@ -87,7 +87,7 @@ export function Header() {
               onClick={() => setMobileOpen((v) => !v)}
               className="md:hidden"
             >
-              <span className="font-display text-xs tracking-widest">{mobileOpen ? "X" : "≡"}</span>
+              <span className="font-display text-xs tracking-widest">{mobileOpen ? "CLOSE" : "MENU"}</span>
             </Button>
           </div>
         </div>

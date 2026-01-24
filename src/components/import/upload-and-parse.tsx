@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
@@ -509,6 +509,18 @@ export function UploadAndParse() {
   const activeEntry = useMemo(() => entries.find((e) => e.id === activeId) ?? entries[0] ?? null, [entries, activeId]);
   const canStart = entries.length > 0 && status !== "uploading" && status !== "ocr" && status !== "saving";
 
+  const progressSteps = useMemo(() => {
+    const isUpload = status !== "idle" && status !== "error";
+    const isOcr = status === "ocr" || status === "confirm" || status === "saving" || status === "done";
+    const isConfirm = status === "confirm" || status === "saving" || status === "done";
+
+    return [
+      { label: "UPLOAD", done: isUpload },
+      { label: "OCR", done: isOcr },
+      { label: "CONFIRM", done: isConfirm },
+    ];
+  }, [status]);
+
   function makeEntry(file: File): ImportEntry {
     return {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -670,7 +682,7 @@ export function UploadAndParse() {
       <Card className="overflow-hidden">
         <CardContent className="p-6">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-display tracking-widest text-sm text-foreground">{title}</div>
+            <div className="font-display tracking-widest text-sm text-foreground text-glow">{title}</div>
             <div className="flex items-center gap-2">
               {activeEntry ? (
                 <Button onClick={handleSaveActive} className="gap-2" disabled={activeEntry.status === "saving"}>
@@ -683,6 +695,29 @@ export function UploadAndParse() {
                 <Wand2 className="w-4 h-4" />
                 {entries.length > 1 ? "RUN OCR (ALL)" : "RUN OCR"}
               </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-primary/20 bg-background/40 px-4 py-3">
+            <div className="flex items-center justify-between text-[10px] font-display tracking-widest text-muted-foreground">
+              {progressSteps.map((step, idx) => (
+                <div key={step.label} className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "inline-flex h-2.5 w-2.5 rounded-full border",
+                        step.done ? "bg-primary border-primary shadow-[0_0_10px_hsl(var(--primary)/0.7)]" : "border-border"
+                      )}
+                    />
+                    <span className={cn(step.done ? "text-primary" : "text-muted-foreground")}>{step.label}</span>
+                  </div>
+                  {idx < progressSteps.length - 1 ? (
+                    <div className="mt-2 h-[2px] w-full bg-border/60">
+                      <div className={cn("h-full", progressSteps[idx + 1].done ? "bg-primary" : "bg-border")} />
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
           </div>
 

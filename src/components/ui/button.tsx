@@ -15,9 +15,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       "disabled:pointer-events-none disabled:opacity-50",
       // Variants
       variant === "primary" && [
+        "relative overflow-hidden",
         "bg-primary text-primary-foreground",
         "hover:brightness-110 active:brightness-90",
         "shadow-lg shadow-primary/10",
+        "before:absolute before:inset-0 before:rounded-[inherit] before:ring-1 before:ring-primary/60",
+        "before:shadow-[0_0_24px_hsl(var(--primary)/0.35)]",
       ],
       variant === "secondary" && [
         "bg-secondary text-secondary-foreground",
@@ -29,7 +32,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       ],
       variant === "outline" && [
         "border border-border bg-transparent",
-        "hover:bg-muted/30",
+        "hover:bg-muted/30 hover:border-primary/50",
       ],
       // Sizes
       size === "sm" && "h-8 px-3 text-sm rounded-lg",

@@ -11,11 +11,11 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={cn(
-          "rounded-xl border border-border bg-card text-card-foreground",
+          "rounded-xl border border-border bg-card text-card-foreground neon-panel",
           "transition-all duration-300",
           hover && [
-            "hover:border-foreground/20",
-            "hover:shadow-lg hover:shadow-black/20",
+            "hover:border-primary/40",
+            "hover:shadow-lg hover:shadow-primary/10",
             "hover:-translate-y-1",
           ],
           className
