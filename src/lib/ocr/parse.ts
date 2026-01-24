@@ -152,17 +152,17 @@ function findNameLineIndex(lines: string[], playerKey: PlayerKey): number | null
 }
 
 function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance: number, playerKey: PlayerKey): RowCandidate | null {
-  let best: { row: RowCandidate; score: number; dist: number } | null = null;
+  let best: { row: RowCandidate; score: number; gap: number } | null = null;
 
   for (const row of rows) {
     if (lineHasOtherPlayerName(row.line, playerKey)) continue;
-    const dist = row.index - index;
-    if (dist < 0 || dist > maxDistance) continue;
+    const gap = Math.abs(row.index - index);
+    if (gap > maxDistance) continue;
     const scored = pickBestStatWindowWithScore(row.nums);
     if (!scored) continue;
 
-    if (!best || scored.score > best.score || (scored.score === best.score && dist < best.dist)) {
-      best = { row, score: scored.score, dist };
+    if (!best || scored.score > best.score || (scored.score === best.score && gap < best.gap)) {
+      best = { row, score: scored.score, gap };
     }
   }
 
@@ -212,7 +212,15 @@ function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | nu
 
     if (nameIdx === -1) continue;
 
+    const otherKey: PlayerKey = playerKey === "ridiculoid" ? "buttstough" : "ridiculoid";
+    const remainder = tokens.slice(nameIdx + 1).join(" ");
+    const hasOther = lineHasPlayerName(remainder, otherKey);
+    if (hasOther) {
+      continue;
+    }
+
     const nums = parseNumbersFromTokens(tokens.slice(nameIdx + 1));
+    if (nums.length < 6) continue;
     const scored = pickBestStatWindowWithScore(nums);
     if (scored && (!best || scored.score > best.score)) {
       best = scored;
