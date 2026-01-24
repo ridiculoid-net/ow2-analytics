@@ -98,6 +98,25 @@ export function parseScoreboardOcr(text: string): ParsedScoreboard {
     if (stats) byKey.set(key, toParsedRowFromStats(key, stats, kdaOrder));
   }
 
+function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance: number, playerKey: PlayerKey): RowCandidate | null {
+  let best: { row: RowCandidate; score: number; gap: number } | null = null;
+
+  for (const row of rows) {
+    const gap = Math.abs(row.index - index);
+    if (gap > maxDistance) continue;
+    const hasOther = lineHasOtherPlayerName(row.line, playerKey);
+    if (hasOther && row.index !== index) continue;
+    const scored = pickBestStatWindowWithScore(row.nums);
+    if (!scored) continue;
+
+    if (!best || scored.score > best.score || (scored.score === best.score && gap < best.gap)) {
+      best = { row, score: scored.score, gap };
+    }
+  }
+
+  return best?.row ?? null;
+}
+
   // Fallback only if we never saw either name.
   const sawAnyName = foundNameLine.size > 0;
   if (!sawAnyName && byKey.size < 2) {
@@ -155,9 +174,10 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
   let best: { row: RowCandidate; score: number; gap: number } | null = null;
 
   for (const row of rows) {
-    if (lineHasOtherPlayerName(row.line, playerKey)) continue;
     const gap = Math.abs(row.index - index);
     if (gap > maxDistance) continue;
+    const hasOther = lineHasOtherPlayerName(row.line, playerKey);
+    if (hasOther && row.index !== index) continue;
     const scored = pickBestStatWindowWithScore(row.nums);
     if (!scored) continue;
 
