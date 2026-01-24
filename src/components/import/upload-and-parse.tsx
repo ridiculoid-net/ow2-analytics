@@ -679,7 +679,7 @@ export function UploadAndParse() {
                 </Button>
               ) : null}
 
-              <Button onClick={handleStartAll} disabled={!canStart} className="gap-2" variant={entries.length > 0 ? "outline" : "default"}>
+              <Button onClick={handleStartAll} disabled={!canStart} className="gap-2" variant={entries.length > 0 ? "outline" : "primary"}>
                 <Wand2 className="w-4 h-4" />
                 {entries.length > 1 ? "RUN OCR (ALL)" : "RUN OCR"}
               </Button>
