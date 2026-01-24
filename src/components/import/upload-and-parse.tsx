@@ -128,6 +128,12 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
 
   const byKey = new Map<PlayerKey, ParsedPlayerRow>();
   const used = new Set<number>();
+  const foundNameLine = new Map<PlayerKey, number>();
+
+  const ridIdx = findNameLineIndex(lines, "ridiculoid");
+  if (ridIdx !== null) foundNameLine.set("ridiculoid", ridIdx);
+  const buttIdx = findNameLineIndex(lines, "buttstough");
+  if (buttIdx !== null) foundNameLine.set("buttstough", buttIdx);
 
   // 0) Hard-match: numbers after name token in the same line
   for (const key of PLAYER_ORDER) {
@@ -137,9 +143,19 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     }
   }
 
-  // 1) Prefer name-based matches when available
+  // 1) Prefer rows near the name line, then name-based matches
   for (const key of PLAYER_ORDER) {
     if (byKey.has(key)) continue;
+    const nameIdx = foundNameLine.get(key);
+    if (nameIdx !== undefined) {
+      const near = findNearestRowByIndex(rows, nameIdx, 2);
+      if (near) {
+        byKey.set(key, toParsedRow(key, near.nums));
+        used.add(near.index);
+        continue;
+      }
+    }
+
     const match = findBestRowByName(rows, key);
     if (match) {
       byKey.set(key, toParsedRow(key, match.nums));
@@ -148,8 +164,9 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
   }
 
   // 2) Fallback: assign remaining rows top-to-bottom
+  const sawAnyName = foundNameLine.size > 0;
   const remainingKeys = PLAYER_ORDER.filter((k) => !byKey.has(k));
-  if (remainingKeys.length > 0) {
+  if (!sawAnyName && remainingKeys.length > 0) {
     const remainingRows = rows
       .filter((r) => !used.has(r.index))
       .sort((a, b) => a.index - b.index);
@@ -166,6 +183,51 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
   }
 
   return { players };
+}
+
+function findNameLineIndex(lines: string[], playerKey: PlayerKey): number | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  let bestIdx: number | null = null;
+  let bestDist = Infinity;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (shouldSkipLine(line)) continue;
+    const tokens = line.split(/\s+/).filter(Boolean).map(normalizeToken);
+
+    for (const t of tokens) {
+      for (const target of targets) {
+        const dist = levenshtein(t, target);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = i;
+        }
+      }
+    }
+  }
+
+  return bestDist <= 2 ? bestIdx : null;
+}
+
+function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance: number): RowCandidate | null {
+  let best: { row: RowCandidate; score: number; dist: number } | null = null;
+
+  for (const row of rows) {
+    const dist = Math.abs(row.index - index);
+    if (dist > maxDistance) continue;
+    const scored = pickBestStatWindowWithScore(row.nums);
+    if (!scored) continue;
+
+    if (!best || scored.score > best.score || (scored.score === best.score && dist < best.dist)) {
+      best = { row, score: scored.score, dist };
+    }
+  }
+
+  return best?.row ?? null;
 }
 
 function findInlineStats(lines: string[], playerKey: PlayerKey): StatWindow | null {
@@ -296,7 +358,7 @@ function extractRowCandidates(lines: string[]): RowCandidate[] {
   for (let i = 0; i < lines.length; i++) {
     let best: RowCandidate | null = null;
 
-    for (let span = 1; span <= 3 && i + span - 1 < lines.length; span++) {
+    for (let span = 1; span <= 2 && i + span - 1 < lines.length; span++) {
       const line = lines.slice(i, i + span).join(" ");
       const nums = extractNumbers(line);
       if (nums.length >= 6) {
@@ -390,10 +452,9 @@ function parseNumbersFromTokens(tokens: string[]): number[] {
 }
 
 function extractNumbers(line: string): number[] {
-  const matches = line.match(/\d[\d,.\s]*\d|\d/g);
+  const matches = line.match(/\d[\d,.]*\d|\d/g);
   if (!matches) return [];
   return matches
-    .map((raw) => raw.replace(/\s+/g, ""))
     .map((raw) => normalizeToInt(raw))
     .filter((n) => Number.isFinite(n) && n >= 0)
     .map((n) => Math.trunc(n));

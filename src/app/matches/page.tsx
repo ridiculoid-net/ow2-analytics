@@ -1,4 +1,4 @@
-﻿import { listMatches, listMatchStats } from "@/lib/db";
+import { listMatches, listMatchStats } from "@/lib/db";
 import { deleteMatchAction } from "@/app/actions";
 import { Card, CardContent, Badge, Button } from "@/components/ui";
 import Link from "next/link";
