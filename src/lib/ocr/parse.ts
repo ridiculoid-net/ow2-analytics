@@ -513,15 +513,15 @@ function parseNumbersFromTokens(tokens: string[]): number[] {
     if (found.length) nums.push(...found);
   }
 
-  if (nums.length === 5 && nums[2] >= 100) {
-    return [nums[0], nums[1], 0, nums[2], nums[3], nums[4]];
-  }
-
   // Heuristic: OCR may merge A and D into a single two-digit number (e.g., "17").
   if (nums.length === 5 && nums[2] >= 1000 && nums[1] >= 10 && nums[1] <= 19) {
     const tens = Math.trunc(nums[1] / 10);
     const ones = nums[1] % 10;
     return [nums[0], tens, ones, nums[2], nums[3], nums[4]];
+  }
+
+  if (nums.length === 5 && nums[2] >= 100) {
+    return [nums[0], nums[1], 0, nums[2], nums[3], nums[4]];
   }
 
   return nums;
