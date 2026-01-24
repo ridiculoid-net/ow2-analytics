@@ -552,6 +552,12 @@ function normalizeToInt(s: string): number {
 }
 
 function detectKdaOrder(lines: string[]): KdaOrder {
+  const header = lines.join(" ").toUpperCase();
+  if (/\bE\s*A\s*D\b/.test(header)) return "EAD";
+  if (/\bE\s*D\s*A\b/.test(header)) return "EDA";
+  if (/\bK\s*A\s*D\b/.test(header)) return "KAD";
+  if (/\bK\s*D\s*A\b/.test(header)) return "KDA";
+
   const counts: Record<KdaOrder, number> = { KDA: 0, KAD: 0, EAD: 0, EDA: 0 };
 
   for (const line of lines) {
