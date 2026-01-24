@@ -724,7 +724,7 @@ export function UploadAndParse() {
                     <Button
                       key={e.id}
                       type="button"
-                      variant={activeEntry?.id === e.id ? "default" : "outline"}
+                      variant={activeEntry?.id === e.id ? "primary" : "outline"}
                       className="justify-start gap-2"
                       onClick={() => setActiveId(e.id)}
                     >
