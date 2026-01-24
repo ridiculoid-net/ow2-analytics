@@ -148,7 +148,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     if (byKey.has(key)) continue;
     const nameIdx = foundNameLine.get(key);
     if (nameIdx !== undefined) {
-      const near = findNearestRowByIndex(rows, nameIdx, 2);
+      const near = findNearestRowByIndex(rows, nameIdx, 2, key);
       if (near) {
         byKey.set(key, toParsedRow(key, near.nums));
         used.add(near.index);
@@ -168,7 +168,7 @@ function parseScoreboardOcrLocal(text: string): { players: ParsedPlayerRow[] } {
     if (byKey.has(key)) continue;
     const nameIdx = foundNameLine.get(key);
     if (nameIdx === undefined) continue;
-    const stats = findStatsNearLine(lines, nameIdx, 2);
+    const stats = findStatsNearLine(lines, nameIdx, 2, key);
     if (stats) {
       byKey.set(key, toParsedRowFromStats(key, stats));
     }
@@ -224,10 +224,11 @@ function findNameLineIndex(lines: string[], playerKey: PlayerKey): number | null
   return bestDist <= 2 ? bestIdx : null;
 }
 
-function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance: number): RowCandidate | null {
+function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance: number, playerKey: PlayerKey): RowCandidate | null {
   let best: { row: RowCandidate; score: number; dist: number } | null = null;
 
   for (const row of rows) {
+    if (lineHasOtherPlayerName(row.line, playerKey)) continue;
     const dist = row.index - index;
     if (dist < 0 || dist > maxDistance) continue;
     const scored = pickBestStatWindowWithScore(row.nums);
@@ -241,10 +242,12 @@ function findNearestRowByIndex(rows: RowCandidate[], index: number, maxDistance:
   return best?.row ?? null;
 }
 
-function findStatsNearLine(lines: string[], index: number, maxDistance: number): StatWindow | null {
+function findStatsNearLine(lines: string[], index: number, maxDistance: number, playerKey: PlayerKey): StatWindow | null {
   const nums: number[] = [];
   for (let i = index; i <= Math.min(lines.length - 1, index + maxDistance); i++) {
     if (shouldSkipLine(lines[i])) continue;
+    if (i !== index && lineHasAnyPlayerName(lines[i])) break;
+    if (lineHasOtherPlayerName(lines[i], playerKey)) break;
     nums.push(...extractNumbers(lines[i]));
     if (nums.length >= 6) break;
   }
@@ -327,7 +330,7 @@ function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerR
 }
 
 function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
-  if (nums.length < 5) return null;
+  if (nums.length < 3) return null;
 
   const base = nums.length >= 6 ? bestStatWindowFromNums(nums) : null;
   let best = base;
@@ -345,6 +348,17 @@ function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
   if (!best && missingBest) return missingBest;
   if (best && missingBest) {
     if (missingBest.score > best.score || best.score <= 5) return missingBest;
+  }
+
+  if (!best && nums.length >= 3) {
+    const tail = nums.slice(-3);
+    const score = scoreStatWindow(0, 0, 0, tail[0] ?? 0, tail[1] ?? 0, tail[2] ?? 0);
+    if (score !== null) {
+      return {
+        stats: { kills: 0, deaths: 0, assists: 0, damage: tail[0] ?? 0, healing: tail[1] ?? 0, mitigation: tail[2] ?? 0 },
+        score,
+      };
+    }
   }
 
   return best;
@@ -467,6 +481,30 @@ function normalizeToken(token: string): string {
     .replace(/1/g, "I")
     .replace(/5/g, "S")
     .replace(/[^A-Z]/g, "");
+}
+
+function lineHasPlayerName(line: string, playerKey: PlayerKey): boolean {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  const tokens = line.split(/\s+/).filter(Boolean).map(normalizeToken);
+  for (const t of tokens) {
+    for (const target of targets) {
+      if (levenshtein(t, target) <= 2) return true;
+    }
+  }
+  return false;
+}
+
+function lineHasAnyPlayerName(line: string): boolean {
+  return lineHasPlayerName(line, "ridiculoid") || lineHasPlayerName(line, "buttstough");
+}
+
+function lineHasOtherPlayerName(line: string, playerKey: PlayerKey): boolean {
+  const otherKey: PlayerKey = playerKey === "ridiculoid" ? "buttstough" : "ridiculoid";
+  return lineHasPlayerName(line, otherKey);
 }
 
 function shouldSkipLine(line: string): boolean {
