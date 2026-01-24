@@ -327,6 +327,30 @@ function toParsedRow(playerKey: PlayerKey, nums: number[] | null): ParsedPlayerR
 }
 
 function pickBestStatWindowWithScore(nums: number[]): ScoredWindow | null {
+  if (nums.length < 5) return null;
+
+  const base = nums.length >= 6 ? bestStatWindowFromNums(nums) : null;
+  let best = base;
+
+  let missingBest: ScoredWindow | null = null;
+  for (const insertAt of [0, 1, 2]) {
+    const withZero = nums.slice();
+    withZero.splice(insertAt, 0, 0);
+    const candidate = bestStatWindowFromNums(withZero);
+    if (candidate && (!missingBest || candidate.score > missingBest.score)) {
+      missingBest = candidate;
+    }
+  }
+
+  if (!best && missingBest) return missingBest;
+  if (best && missingBest) {
+    if (missingBest.score > best.score || best.score <= 5) return missingBest;
+  }
+
+  return best;
+}
+
+function bestStatWindowFromNums(nums: number[]): ScoredWindow | null {
   if (nums.length < 6) return null;
 
   let best: ScoredWindow | null = null;
