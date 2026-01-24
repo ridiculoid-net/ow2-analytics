@@ -598,18 +598,32 @@ function normalizeToInt(s: string): number {
 }
 
 function detectKdaOrder(lines: string[]): KdaOrder {
-  let sawKda = false;
-  let sawKad = false;
+  const counts: Record<KdaOrder, number> = { KDA: 0, KAD: 0 };
 
   for (const line of lines) {
-    const letters = line.toUpperCase().replace(/[^A-Z]/g, "");
-    if (!sawKda && letters.includes("KDA")) sawKda = true;
-    if (!sawKad && letters.includes("KAD")) sawKad = true;
-    if (sawKda && sawKad) break;
+    const tokens = line
+      .toUpperCase()
+      .split(/[\s\/\\|]+/)
+      .map((token) => token.replace(/[^A-Z]/g, ""))
+      .filter(Boolean);
+
+    const letterOrder: string[] = [];
+    for (const token of tokens) {
+      if ([...token].every((ch) => ch === "K" || ch === "D" || ch === "A")) {
+        letterOrder.push(...token);
+      }
+    }
+
+    const kIdx = letterOrder.indexOf("K");
+    const dIdx = letterOrder.indexOf("D");
+    const aIdx = letterOrder.indexOf("A");
+    if (kIdx === -1 || dIdx === -1 || aIdx === -1) continue;
+
+    if (aIdx < dIdx) counts.KAD++;
+    else counts.KDA++;
   }
 
-  if (sawKad && !sawKda) return "KAD";
-  return "KDA";
+  return counts.KAD > counts.KDA ? "KAD" : "KDA";
 }
 
 function normalizeKdaOrder(stats: StatWindow, kdaOrder: KdaOrder): StatWindow {
