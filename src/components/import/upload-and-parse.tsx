@@ -913,14 +913,17 @@ export function UploadAndParse() {
     const statsTexts: string[] = [];
     for (let i = 0; i < statsVariants.length; i++) {
       const { data } = await Tesseract.recognize(statsVariants[i], "eng", {
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,./",
-        tessedit_pageseg_mode: "6",
         logger: (m) => {
           if (m.status === "recognizing text") {
             const base = 20 + Math.round(((i + (m.progress ?? 0)) / statsVariants.length) * 80);
             setProgress(base);
           }
         },
+        // Tesseract options not in types.
+        ...({
+          tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,./",
+          tessedit_pageseg_mode: "6",
+        } as Record<string, string>),
       });
       if (data.text) statsTexts.push(data.text);
     }
