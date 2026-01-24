@@ -1161,7 +1161,15 @@ export function UploadAndParse() {
                 </div>
                 <div>
                   <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">MAP</label>
-                  <Input value={activeEntry.map} onChange={(e) => updateEntry(activeEntry.id, { map: e.target.value })} placeholder="e.g. KING'S ROW" />
+                  <Select value={activeEntry.map} onChange={(e) => updateEntry(activeEntry.id, { map: e.target.value })}>
+                    <option value="">SELECT MAP</option>
+                    {MAPS.map((map) => (
+                      <option key={map} value={map}>
+                        {map}
+                      </option>
+                    ))}
+                    <option value="OTHER">OTHER</option>
+                  </Select>
                 </div>
               </div>
             ) : null}
