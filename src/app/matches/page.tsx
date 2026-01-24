@@ -23,7 +23,7 @@ export default async function MatchesPage() {
           </p>
         </div>
         <Link href="/import" className="text-xs font-mono tracking-widest text-primary underline">
-          IMPORT MORE ->
+          IMPORT MORE &gt;
         </Link>
       </div>
 
@@ -70,7 +70,7 @@ export default async function MatchesPage() {
                         rel="noreferrer"
                         className="text-xs font-mono tracking-widest text-primary underline"
                       >
-                        VIEW SCREENSHOT ->
+                        VIEW SCREENSHOT &gt;
                       </a>
                     ) : null}
                     <Link href={`/matches/${m.id}/edit`} className="text-xs font-mono tracking-widest text-primary underline">
