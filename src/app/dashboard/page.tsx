@@ -47,22 +47,21 @@ export default async function DashboardPage() {
   const topMaps = Array.from(byMap.entries())
     .sort((a, b) => b[1].games - a[1].games)
     .slice(0, 8);
-  const topMapShare = topMaps[0] ? pct(topMaps[0][1].games, total) : 0;
 
-  const byHero = new Map<string, { games: number; wins: number }>();
+  const byHero = new Map<string, { games: number; wins: number; rid: number; but: number }>();
   for (const s of stats) {
     const hero = (s.hero || "Unknown").toUpperCase();
-    const cur = byHero.get(hero) ?? { games: 0, wins: 0 };
+    const cur = byHero.get(hero) ?? { games: 0, wins: 0, rid: 0, but: 0 };
     cur.games += 1;
     const match = matchById.get(s.match_id);
     if (match?.result === "W") cur.wins += 1;
+    if (s.player_key === "ridiculoid") cur.rid += 1;
+    if (s.player_key === "buttstough") cur.but += 1;
     byHero.set(hero, cur);
   }
   const topHeroes = Array.from(byHero.entries())
     .sort((a, b) => b[1].games - a[1].games)
     .slice(0, 8);
-  const totalHeroPicks = stats.length;
-  const topHeroShare = topHeroes[0] ? pct(topHeroes[0][1].games, totalHeroPicks) : 0;
 
   const byPlayer = new Map<
     string,
@@ -206,7 +205,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
             <div className="mt-2 text-[10px] font-mono tracking-widest text-muted-foreground">
-              {byMap.size} MAPS • TOP MAP {topMapShare}% OF GAMES
+              {byMap.size} MAPS • {total} TOTAL GAMES
             </div>
 
             <div className="mt-4 grid gap-2">
@@ -221,6 +220,7 @@ export default async function DashboardPage() {
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
                       <span>{v.games} G</span>
+                      <span>{pct(v.games, total)}%</span>
                       <span className="text-primary">&gt;</span>
                     </div>
                   </div>
@@ -243,7 +243,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
             <div className="mt-2 text-[10px] font-mono tracking-widest text-muted-foreground">
-              {byHero.size} HEROES • TOP HERO {topHeroShare}% OF PICKS
+              {byHero.size} HEROES • RID {rid.games} G / BUT {but.games} G
             </div>
 
             <div className="mt-4 grid gap-2">
@@ -258,6 +258,8 @@ export default async function DashboardPage() {
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
                       <span>{v.games} PICKS</span>
+                      <span>RID {pct(v.rid, rid.games)}%</span>
+                      <span>BUT {pct(v.but, but.games)}%</span>
                       <span className="text-primary">&gt;</span>
                     </div>
                   </div>
