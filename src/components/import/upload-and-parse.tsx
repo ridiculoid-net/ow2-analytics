@@ -850,6 +850,7 @@ export function UploadAndParse() {
   const [status, setStatus] = useState<"idle" | "uploading" | "ocr" | "confirm" | "saving" | "done" | "error">("idle");
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -886,6 +887,7 @@ export function UploadAndParse() {
 
   function onPickFiles(files: FileList | null) {
     setError(null);
+    setSuccess(null);
     setStatus("idle");
     setProgress(0);
 
@@ -958,6 +960,7 @@ export function UploadAndParse() {
   async function handleStartAll() {
     if (entries.length === 0) return;
     setError(null);
+    setSuccess(null);
 
     try {
       for (const entry of entries) {
@@ -1007,6 +1010,7 @@ export function UploadAndParse() {
 
     setStatus("saving");
     setError(null);
+    setSuccess(null);
 
     try {
       const payload = {
@@ -1030,6 +1034,15 @@ export function UploadAndParse() {
       await saveMatchAction(payload);
       updateEntry(activeEntry.id, { status: "done" });
       setStatus("done");
+      setEntries((prev) => {
+        prev.forEach((e) => URL.revokeObjectURL(e.previewUrl));
+        return [];
+      });
+      setActiveId(null);
+      setProgress(0);
+      setStatus("idle");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setSuccess("Match saved successfully");
     } catch (e: any) {
       setStatus("error");
       setError(e?.message ?? "Save failed");
@@ -1091,6 +1104,11 @@ export function UploadAndParse() {
           </div>
 
           <div className="mt-4 grid gap-3">
+            {success ? (
+              <div className="text-xs font-mono tracking-widest text-primary border border-primary/40 bg-primary/10 rounded-lg px-3 py-2">
+                {success}
+              </div>
+            ) : null}
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-display tracking-widest text-muted-foreground mb-2">SCREENSHOT</label>

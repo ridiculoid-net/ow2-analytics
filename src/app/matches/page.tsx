@@ -9,7 +9,7 @@ function kda(k: number, d: number, a: number) {
 
 export const dynamic = "force-dynamic";
 
-export default async function MatchesPage() {
+export default async function MatchesPage({ searchParams }: { searchParams?: { updated?: string } }) {
   const matches = await listMatches(100);
   const stats = await listMatchStats(matches.map((m) => m.id));
 
@@ -26,6 +26,12 @@ export default async function MatchesPage() {
           IMPORT MORE &gt;
         </Link>
       </div>
+
+      {searchParams?.updated ? (
+        <div className="mt-6 text-xs font-mono tracking-widest text-primary border border-primary/40 bg-primary/10 rounded-lg px-3 py-2">
+          Changes saved successfully.
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-3">
         {matches.map((m) => {

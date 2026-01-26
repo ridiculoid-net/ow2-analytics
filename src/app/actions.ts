@@ -118,4 +118,5 @@ export async function updateMatchAction(formData: FormData) {
   await updateMatch(parsed.matchId, parsed);
   revalidatePath("/matches");
   revalidatePath("/dashboard");
+  redirect("/matches?updated=1");
 }
