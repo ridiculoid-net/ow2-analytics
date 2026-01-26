@@ -218,7 +218,7 @@ export default async function DashboardPage() {
                   >
                     <div className="flex items-center gap-2 font-display tracking-widest text-xs text-foreground">
                       <span>{name}</span>
-                      <Badge variant="secondary">{pct(v.games, total)}%</Badge>
+                      <Badge variant="info">{pct(v.games, total)}%</Badge>
                     </div>
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
@@ -258,8 +258,8 @@ export default async function DashboardPage() {
                   >
                     <div className="flex items-center gap-2 font-display tracking-widest text-xs text-foreground">
                       <span>{hero}</span>
-                      <Badge variant="secondary">RID {pct(v.rid, rid.games)}%</Badge>
-                      <Badge variant="secondary">BUT {pct(v.but, but.games)}%</Badge>
+                      <Badge variant="info">RID {pct(v.rid, rid.games)}%</Badge>
+                      <Badge variant="info">BUT {pct(v.but, but.games)}%</Badge>
                     </div>
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
