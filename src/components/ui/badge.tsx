@@ -19,7 +19,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
           variant === "success" && "bg-emerald-500/20 text-emerald-400",
           variant === "warning" && "bg-amber-500/20 text-amber-400",
           variant === "danger" && "bg-red-500/20 text-red-400",
-          variant === "info" && "bg-sky-400/25 text-sky-200 border border-sky-400/40",
+          variant === "info" && "bg-sky-500/90 text-slate-900 border border-sky-200/60 shadow-[0_0_12px_rgba(56,189,248,0.45)]",
           className
         )}
         {...props}
