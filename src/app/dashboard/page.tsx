@@ -216,11 +216,13 @@ export default async function DashboardPage() {
                     key={name}
                     className="flex items-center justify-between gap-3 border border-border rounded-lg bg-muted/10 px-3 py-2"
                   >
-                    <div className="font-display tracking-widest text-xs text-foreground">{name}</div>
+                    <div className="flex items-center gap-2 font-display tracking-widest text-xs text-foreground">
+                      <span>{name}</span>
+                      <Badge variant="secondary">{pct(v.games, total)}%</Badge>
+                    </div>
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
                       <span>{v.games} G</span>
-                      <span>{pct(v.games, total)}%</span>
                       <span className="text-primary">&gt;</span>
                     </div>
                   </div>
@@ -254,12 +256,14 @@ export default async function DashboardPage() {
                     key={hero}
                     className="flex items-center justify-between gap-3 border border-border rounded-lg bg-muted/10 px-3 py-2"
                   >
-                    <div className="font-display tracking-widest text-xs text-foreground">{hero}</div>
+                    <div className="flex items-center gap-2 font-display tracking-widest text-xs text-foreground">
+                      <span>{hero}</span>
+                      <Badge variant="secondary">RID {pct(v.rid, rid.games)}%</Badge>
+                      <Badge variant="secondary">BUT {pct(v.but, but.games)}%</Badge>
+                    </div>
                     <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                       <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
                       <span>{v.games} PICKS</span>
-                      <span>RID {pct(v.rid, rid.games)}%</span>
-                      <span>BUT {pct(v.but, but.games)}%</span>
                       <span className="text-primary">&gt;</span>
                     </div>
                   </div>
