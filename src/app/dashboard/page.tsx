@@ -47,6 +47,7 @@ export default async function DashboardPage() {
   const topMaps = Array.from(byMap.entries())
     .sort((a, b) => b[1].games - a[1].games)
     .slice(0, 8);
+  const topMapShare = topMaps[0] ? pct(topMaps[0][1].games, total) : 0;
 
   const byHero = new Map<string, { games: number; wins: number }>();
   for (const s of stats) {
@@ -60,6 +61,8 @@ export default async function DashboardPage() {
   const topHeroes = Array.from(byHero.entries())
     .sort((a, b) => b[1].games - a[1].games)
     .slice(0, 8);
+  const totalHeroPicks = stats.length;
+  const topHeroShare = topHeroes[0] ? pct(topHeroes[0][1].games, totalHeroPicks) : 0;
 
   const byPlayer = new Map<
     string,
@@ -197,10 +200,13 @@ export default async function DashboardPage() {
         <Card className="bg-card/40">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
-              <div className="panel-title font-display tracking-widest text-sm text-foreground">TOP MAPS</div>
+              <div className="panel-title font-display tracking-widest text-sm text-foreground">MAPS</div>
               <Link href="/dashboard/maps" className="text-xs font-mono tracking-widest text-primary underline">
                 VIEW ALL &gt;
               </Link>
+            </div>
+            <div className="mt-2 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {byMap.size} MAPS • TOP MAP {topMapShare}% OF GAMES
             </div>
 
             <div className="mt-4 grid gap-2">
@@ -231,10 +237,13 @@ export default async function DashboardPage() {
         <Card className="bg-card/40">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
-              <div className="panel-title font-display tracking-widest text-sm text-foreground">TOP HEROES</div>
+              <div className="panel-title font-display tracking-widest text-sm text-foreground">HEROES</div>
               <Link href="/dashboard/heroes" className="text-xs font-mono tracking-widest text-primary underline">
                 VIEW ALL &gt;
               </Link>
+            </div>
+            <div className="mt-2 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {byHero.size} HEROES • TOP HERO {topHeroShare}% OF PICKS
             </div>
 
             <div className="mt-4 grid gap-2">
