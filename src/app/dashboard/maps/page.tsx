@@ -17,6 +17,12 @@ export default async function MapsPage() {
   }
 
   const rows = Array.from(byMap.entries()).sort((a, b) => b[1].games - a[1].games);
+  const totalGames = matches.length;
+  const totalMaps = byMap.size;
+  const mostPlayed = rows[0];
+  const bestWinRate = rows
+    .filter(([, v]) => v.games >= 5)
+    .sort((a, b) => (b[1].wins / b[1].games) - (a[1].wins / a[1].games))[0];
 
   return (
     <div className="container mx-auto px-4 py-10">
@@ -30,16 +36,46 @@ export default async function MapsPage() {
         </Link>
       </div>
 
-      <Card className="mt-6 bg-card/40">
+      <div className="mt-6 grid md:grid-cols-3 gap-3">
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">TOTAL GAMES</div>
+            <div className="mt-2 font-display text-2xl tracking-widest text-foreground">{totalGames}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">{totalMaps} MAPS</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">MOST PLAYED</div>
+            <div className="mt-2 font-display text-sm tracking-widest text-foreground">{mostPlayed?.[0] ?? "—"}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {mostPlayed ? `${mostPlayed[1].games} G` : "NO DATA"}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">BEST WR (5+)</div>
+            <div className="mt-2 font-display text-sm tracking-widest text-foreground">{bestWinRate?.[0] ?? "—"}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {bestWinRate ? `${Math.round((bestWinRate[1].wins / bestWinRate[1].games) * 100)}% WR` : "NO DATA"}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mt-4 bg-card/40">
         <CardContent className="p-6">
           <div className="grid gap-2">
             {rows.map(([map, v]) => {
               const wr = v.games ? Math.round((v.wins / v.games) * 100) : 0;
+              const share = totalGames ? Math.round((v.games / totalGames) * 100) : 0;
               return (
                 <div key={map} className="flex items-center justify-between gap-3 border border-border rounded-lg bg-muted/10 px-3 py-2">
                   <div className="font-display tracking-widest text-xs text-foreground">{map}</div>
                   <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                     <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
+                    <Badge variant="info">{share}% PLAYED</Badge>
                     <span>{v.wins}W</span>
                     <span>{v.losses}L</span>
                     <span>{v.draws}D</span>

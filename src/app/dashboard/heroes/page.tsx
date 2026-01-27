@@ -6,18 +6,28 @@ export default async function HeroesPage() {
   const { matches, stats } = await fetchAllForDashboard(365);
 
   const matchById = new Map(matches.map((m) => [m.id, m]));
-  const byHero = new Map<string, { picks: number; wins: number }>();
+  const byHero = new Map<string, { picks: number; wins: number; rid: number; but: number }>();
 
   for (const s of stats) {
     const hero = (s.hero || "Unknown").toUpperCase();
-    const cur = byHero.get(hero) ?? { picks: 0, wins: 0 };
+    const cur = byHero.get(hero) ?? { picks: 0, wins: 0, rid: 0, but: 0 };
     cur.picks += 1;
     const m = matchById.get(s.match_id);
     if (m?.result === "W") cur.wins += 1;
+    if (s.player_key === "ridiculoid") cur.rid += 1;
+    if (s.player_key === "buttstough") cur.but += 1;
     byHero.set(hero, cur);
   }
 
   const rows = Array.from(byHero.entries()).sort((a, b) => b[1].picks - a[1].picks);
+  const totalPicks = stats.length;
+  const totalHeroes = byHero.size;
+  const mostPicked = rows[0];
+  const bestWinRate = rows
+    .filter(([, v]) => v.picks >= 5)
+    .sort((a, b) => (b[1].wins / b[1].picks) - (a[1].wins / a[1].picks))[0];
+  const ridGames = stats.filter((s) => s.player_key === "ridiculoid").length;
+  const butGames = stats.filter((s) => s.player_key === "buttstough").length;
 
   return (
     <div className="container mx-auto px-4 py-10">
@@ -31,16 +41,48 @@ export default async function HeroesPage() {
         </Link>
       </div>
 
-      <Card className="mt-6 bg-card/40">
+      <div className="mt-6 grid md:grid-cols-3 gap-3">
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">TOTAL PICKS</div>
+            <div className="mt-2 font-display text-2xl tracking-widest text-foreground">{totalPicks}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">{totalHeroes} HEROES</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">MOST PICKED</div>
+            <div className="mt-2 font-display text-sm tracking-widest text-foreground">{mostPicked?.[0] ?? "—"}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {mostPicked ? `${mostPicked[1].picks} PICKS` : "NO DATA"}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/40">
+          <CardContent className="p-4">
+            <div className="text-xs font-mono tracking-widest text-muted-foreground">BEST WR (5+)</div>
+            <div className="mt-2 font-display text-sm tracking-widest text-foreground">{bestWinRate?.[0] ?? "—"}</div>
+            <div className="mt-1 text-[10px] font-mono tracking-widest text-muted-foreground">
+              {bestWinRate ? `${Math.round((bestWinRate[1].wins / bestWinRate[1].picks) * 100)}% WR` : "NO DATA"}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mt-4 bg-card/40">
         <CardContent className="p-6">
           <div className="grid gap-2">
             {rows.map(([hero, v]) => {
               const wr = v.picks ? Math.round((v.wins / v.picks) * 100) : 0;
+              const share = totalPicks ? Math.round((v.picks / totalPicks) * 100) : 0;
               return (
                 <div key={hero} className="flex items-center justify-between gap-3 border border-border rounded-lg bg-muted/10 px-3 py-2">
                   <div className="font-display tracking-widest text-xs text-foreground">{hero}</div>
                   <div className="flex items-center gap-2 text-xs font-mono tracking-widest text-muted-foreground">
                     <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
+                    <Badge variant="info">{share}% PICKS</Badge>
+                    <Badge variant="info">RID {ridGames ? Math.round((v.rid / ridGames) * 100) : 0}%</Badge>
+                    <Badge variant="info">BUT {butGames ? Math.round((v.but / butGames) * 100) : 0}%</Badge>
                     <span className="text-primary">{v.picks} PICKS</span>
                   </div>
                 </div>
