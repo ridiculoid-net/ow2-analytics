@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 import { saveMatchAction } from "@/app/actions";
 import type { MatchMode, MatchResult, PlayerKey } from "@/types";
@@ -68,12 +68,20 @@ type ImportEntry = {
   error?: string | null;
 };
 
+type HeroDefaults = Partial<Record<PlayerKey, { hero: string; source: "recent" | "mostPlayed" }>>;
+
 const HERO_FALLBACK = "Unknown";
 const PLAYER_ORDER: PlayerKey[] = ["ridiculoid", "buttstough"];
 const HERO_PRIORITY = ["Reinhardt", "D.Va", "Mercy", "Junkrat", "Lucio", "Torbjorn", "Bastion"];
+const HERO_ICON_MAX_DISTANCE = 12;
+const HERO_ICON_MIN_CONFIDENCE_GAP = 2;
 
 function normalizeHeroName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function displayHeroName(name: string): string {
@@ -81,6 +89,90 @@ function displayHeroName(name: string): string {
   if (norm === "lucio") return "Lucio";
   if (norm === "torbjorn") return "Torbjorn";
   return name;
+}
+
+function heroIconSlug(name: string): string {
+  return normalizeHeroName(name);
+}
+
+type HeroIconHash = {
+  hero: string;
+  hash: string;
+};
+
+let heroIconHashesPromise: Promise<HeroIconHash[]> | null = null;
+
+async function loadHeroIconHashes(): Promise<HeroIconHash[]> {
+  if (heroIconHashesPromise) return heroIconHashesPromise;
+
+  heroIconHashesPromise = (async () => {
+    const hashes: HeroIconHash[] = [];
+    await Promise.all(
+      HEROES.map(async (hero) => {
+        const slug = heroIconSlug(hero.name);
+        const src = `/hero-icons/${slug}.png`;
+        try {
+          const img = await loadImage(src);
+          const hash = computeDHashFromImage(img);
+          hashes.push({ hero: hero.name, hash });
+        } catch {
+          // Missing icons are skipped.
+        }
+      })
+    );
+    return hashes;
+  })();
+
+  return heroIconHashesPromise;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function computeDHashFromImage(img: HTMLImageElement): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = 9;
+  canvas.height = 8;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.drawImage(img, 0, 0, 9, 8);
+  return computeDHashFromCanvas(ctx);
+}
+
+function computeDHashFromCanvas(ctx: CanvasRenderingContext2D): string {
+  const { data } = ctx.getImageData(0, 0, 9, 8);
+  const getGray = (x: number, y: number) => {
+    const idx = (y * 9 + x) * 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  };
+
+  let bits = "";
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const left = getGray(x, y);
+      const right = getGray(x + 1, y);
+      bits += left > right ? "1" : "0";
+    }
+  }
+  return bits;
+}
+
+function hammingDistance(a: string, b: string): number {
+  if (a.length !== b.length) return Number.POSITIVE_INFINITY;
+  let dist = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) dist += 1;
+  }
+  return dist;
 }
 
 const HERO_OPTIONS = (() => {
@@ -100,10 +192,28 @@ const HERO_OPTIONS = (() => {
   return [...prioritized, ...rest];
 })();
 
-function defaultPlayers(): PlayerForm[] {
+function defaultPlayers(heroDefaults?: HeroDefaults): PlayerForm[] {
   return [
-    { playerKey: "ridiculoid", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0, damage: null, healing: null, mitigation: null },
-    { playerKey: "buttstough", hero: HERO_FALLBACK, kills: 0, deaths: 0, assists: 0, damage: null, healing: null, mitigation: null },
+    {
+      playerKey: "ridiculoid",
+      hero: heroDefaults?.ridiculoid?.hero ?? HERO_FALLBACK,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      damage: null,
+      healing: null,
+      mitigation: null,
+    },
+    {
+      playerKey: "buttstough",
+      hero: heroDefaults?.buttstough?.hero ?? HERO_FALLBACK,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      damage: null,
+      healing: null,
+      mitigation: null,
+    },
   ];
 }
 
@@ -516,6 +626,108 @@ function lineHasOtherPlayerName(line: string, playerKey: PlayerKey): boolean {
   return lineHasPlayerName(line, otherKey);
 }
 
+type OCRWordBox = {
+  text: string;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+};
+
+type IconHeroGuesses = Partial<Record<PlayerKey, string>>;
+
+function findBestNameWord(words: OCRWordBox[], playerKey: PlayerKey): OCRWordBox | null {
+  const targets =
+    playerKey === "ridiculoid"
+      ? ["RIDICULOID", "RIOICULOID", "RIGICULOID", "RI0ICULOID", "RIDICUL0ID"]
+      : ["BUTTSTOUGH", "BUTTSTOVGH", "BUTISTOUGH", "BURTSTOUGH", "BUTTS100GH", "BUTTST0UGH"];
+
+  let best: { word: OCRWordBox; dist: number } | null = null;
+  for (const word of words) {
+    const norm = normalizeToken(word.text ?? "");
+    if (norm.length < 4) continue;
+    for (const target of targets) {
+      const dist = levenshtein(norm, target);
+      if (!best || dist < best.dist) {
+        best = { word, dist };
+      }
+    }
+  }
+
+  if (!best || best.dist > 2) return null;
+  return best.word;
+}
+
+function computeIconCrop(word: OCRWordBox, imageW: number, imageH: number): { x: number; y: number; size: number } | null {
+  const height = Math.max(1, Math.round(word.bbox.y1 - word.bbox.y0));
+  const size = Math.round(height * 1.4);
+  const pad = Math.round(height * 0.2);
+  let x = Math.round(word.bbox.x0 - size - pad);
+  let y = Math.round(word.bbox.y0 - (size - height) / 2);
+
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+
+  const maxSize = Math.min(size, imageW - x, imageH - y);
+  if (maxSize < 8) return null;
+
+  return { x, y, size: maxSize };
+}
+
+async function detectHeroIconsFromOcr(preprocessedDataUrl: string, ocrData: any): Promise<IconHeroGuesses> {
+  const words = (ocrData?.words ?? []) as OCRWordBox[];
+  if (!words.length) return {};
+
+  const iconHashes = await loadHeroIconHashes();
+  if (iconHashes.length === 0) return {};
+
+  const img = await loadImage(preprocessedDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return {};
+  ctx.drawImage(img, 0, 0);
+
+  const guesses: IconHeroGuesses = {};
+
+  for (const key of PLAYER_ORDER) {
+    const word = findBestNameWord(words, key);
+    if (!word) continue;
+    const crop = computeIconCrop(word, img.width, img.height);
+    if (!crop) continue;
+
+    const iconCanvas = document.createElement("canvas");
+    iconCanvas.width = 9;
+    iconCanvas.height = 8;
+    const iconCtx = iconCanvas.getContext("2d");
+    if (!iconCtx) continue;
+    iconCtx.drawImage(canvas, crop.x, crop.y, crop.size, crop.size, 0, 0, 9, 8);
+    const cropHash = computeDHashFromCanvas(iconCtx);
+    if (!cropHash) continue;
+
+    let bestHero: { hero: string; dist: number } | null = null;
+    let secondBest = Number.POSITIVE_INFINITY;
+
+    for (const candidate of iconHashes) {
+      const dist = hammingDistance(cropHash, candidate.hash);
+      if (!bestHero || dist < bestHero.dist) {
+        secondBest = bestHero?.dist ?? Number.POSITIVE_INFINITY;
+        bestHero = { hero: candidate.hero, dist };
+      } else if (dist < secondBest) {
+        secondBest = dist;
+      }
+    }
+
+    if (
+      bestHero &&
+      bestHero.dist <= HERO_ICON_MAX_DISTANCE &&
+      bestHero.dist + HERO_ICON_MIN_CONFIDENCE_GAP <= secondBest
+    ) {
+      guesses[key] = bestHero.hero;
+    }
+  }
+
+  return guesses;
+}
+
 function tryCombinePrevKda(lines: string[], index: number, playerKey: PlayerKey): StatWindow | null {
   if (index <= 0) return null;
   const currentLine = lines[index];
@@ -851,6 +1063,7 @@ export function UploadAndParse() {
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [heroDefaults, setHeroDefaults] = useState<HeroDefaults>({});
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -869,13 +1082,46 @@ export function UploadAndParse() {
     ];
   }, [status]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadHeroDefaults() {
+      try {
+        const res = await fetch("/api/hero-defaults");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!mounted) return;
+        const defaults = (json?.defaults ?? {}) as HeroDefaults;
+        setHeroDefaults(defaults);
+
+        setEntries((prev) =>
+          prev.map((entry) => ({
+            ...entry,
+            players: entry.players.map((p) =>
+              p.hero === HERO_FALLBACK && defaults[p.playerKey]?.hero
+                ? { ...p, hero: defaults[p.playerKey]!.hero }
+                : p
+            ),
+          }))
+        );
+      } catch {
+        // Silent fallback to manual hero selection.
+      }
+    }
+
+    loadHeroDefaults();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   function makeEntry(file: File): ImportEntry {
     return {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file,
       previewUrl: URL.createObjectURL(file),
       rawText: "",
-      players: defaultPlayers(),
+      players: defaultPlayers(heroDefaults),
       playedAt: new Date().toISOString().slice(0, 16),
       mode: "QP",
       result: "W",
@@ -921,7 +1167,7 @@ export function UploadAndParse() {
     return json.url as string;
   }
 
-  async function runOCR(selected: File) {
+  async function runOCR(selected: File): Promise<{ text: string; iconHeroes: IconHeroGuesses }> {
     setStatus("ocr");
     setProgress(0);
 
@@ -954,7 +1200,9 @@ export function UploadAndParse() {
 
     const baseText = baseData.text ?? "";
     const statsText = statsTexts.join("\n\n");
-    return `${baseText}\n\n---STATS PASS---\n\n${statsText}`.trim();
+    const iconHeroes = await detectHeroIconsFromOcr(preprocessed, baseData);
+    const text = `${baseText}\n\n---STATS PASS---\n\n${statsText}`.trim();
+    return { text, iconHeroes };
   }
 
   async function handleStartAll() {
@@ -970,7 +1218,7 @@ export function UploadAndParse() {
         const url = await uploadToBlob(entry.file);
         updateEntry(entry.id, { screenshotUrl: url });
 
-        const text = await runOCR(entry.file);
+        const { text, iconHeroes } = await runOCR(entry.file);
         updateEntry(entry.id, { rawText: text, status: "ocr" });
 
         const parsed = parseScoreboardOcrLocal(text);
@@ -980,7 +1228,7 @@ export function UploadAndParse() {
             const found = parsed.players.find((x) => x.playerKey === p.playerKey);
             return {
               ...p,
-              hero: found?.hero ?? p.hero ?? HERO_FALLBACK,
+              hero: iconHeroes[p.playerKey] ?? found?.hero ?? p.hero ?? HERO_FALLBACK,
               kills: found?.kills ?? 0,
               deaths: found?.deaths ?? 0,
               assists: found?.assists ?? 0,
