@@ -76,17 +76,27 @@ export default async function HeroesPage() {
               const wr = v.picks ? Math.round((v.wins / v.picks) * 100) : 0;
               const share = totalPicks ? Math.round((v.picks / totalPicks) * 100) : 0;
               return (
-                <div
-                  key={hero}
-                  className="flex flex-col gap-2 border border-border rounded-lg bg-muted/10 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-                >
-                  <div className="w-full font-display tracking-widest text-xs text-foreground sm:w-auto">{hero}</div>
-                  <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono tracking-widest text-muted-foreground sm:w-auto sm:justify-end sm:text-xs">
-                    <Badge variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}>{wr}% WR</Badge>
-                    <Badge variant="info">{share}% PICKS</Badge>
-                    <Badge variant="info">RID {ridGames ? Math.round((v.rid / ridGames) * 100) : 0}%</Badge>
-                    <Badge variant="info">BUT {butGames ? Math.round((v.but / butGames) * 100) : 0}%</Badge>
-                    <span className="text-primary">{v.picks} PICKS</span>
+                <div key={hero} className="flex flex-col gap-2 border border-border rounded-lg bg-muted/10 px-3 py-2">
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <div className="min-w-0 truncate font-display tracking-widest text-xs text-foreground">{hero}</div>
+                    <span className="text-[10px] font-mono tracking-widest text-primary">{v.picks} PICKS</span>
+                  </div>
+                  <div className="flex flex-nowrap items-center gap-1.5 text-[10px] font-mono tracking-widest text-muted-foreground sm:text-xs">
+                    <Badge
+                      variant={wr >= 55 ? "success" : wr >= 45 ? "warning" : "danger"}
+                      className="px-1.5 py-0 text-[10px] sm:text-xs"
+                    >
+                      {wr}% WR
+                    </Badge>
+                    <Badge variant="info" className="px-1.5 py-0 text-[10px] sm:text-xs">
+                      {share}% PICKS
+                    </Badge>
+                    <Badge variant="info" className="px-1.5 py-0 text-[10px] sm:text-xs">
+                      RID {ridGames ? Math.round((v.rid / ridGames) * 100) : 0}%
+                    </Badge>
+                    <Badge variant="info" className="px-1.5 py-0 text-[10px] sm:text-xs">
+                      BUT {butGames ? Math.round((v.but / butGames) * 100) : 0}%
+                    </Badge>
                   </div>
                 </div>
               );
